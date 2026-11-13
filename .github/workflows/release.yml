@@ -20,7 +20,10 @@ jobs:
           dotnet-version: '10.0.x'
       - name: Version
         id: version
-        run: echo "version=${GITHUB_REF_NAME}" | sed 's#/#-#g' >> "$GITHUB_OUTPUT"
+        # a tag gives the version; a run by hand gets 0.0.0-ci.<run number> (NuGet needs a real version number)
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then v="$GITHUB_REF_NAME"; else v="v0.0.0-ci.$GITHUB_RUN_NUMBER"; fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
       - name: Package for Linux
         run: scripts/package.sh linux-x64 "${{ steps.version.outputs.version }}" dist
       - name: Package for Windows

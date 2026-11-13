@@ -5,6 +5,10 @@
 set -euo pipefail
 rid="${1:?rid}"; version="${2:?version}"; out="${3:-dist}"
 root="$(cd "$(dirname "$0")/.." && pwd)"
+if ! [[ "${version#v}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+    echo "version must look like v1.2.3 or v1.2.3-beta.1 (got $version)" >&2
+    exit 2
+fi
 name="AssetShelf-${version}-${rid}"
 stage="${out}/${name}"
 rm -rf "${stage:?}"; mkdir -p "$stage/tools/ShelfIndex"
