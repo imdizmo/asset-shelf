@@ -342,7 +342,8 @@ internal static class Indexer
                         byte[] img = r.ReadBytes(size);
                         bool jpeg = img.Length > 2 && img[0] == 0xFF && img[1] == 0xD8;
                         bool png = img.Length > 4 && img[0] == 0x89 && img[1] == (byte)'P';
-                        if (jpeg || png)
+                        // the size the image itself declares, not the table's: a small file can claim a huge picture
+                        if ((jpeg || png) && ImageSize(img, png) is { } dim && dim.W is > 0 and <= 4096 && dim.H is > 0 and <= 4096)
                         {
                             pics[obj[(obj.LastIndexOf('.') + 1)..]] = (img, jpeg ? ".jpg" : ".png");
                         }
@@ -358,6 +359,33 @@ internal static class Indexer
         }
 
         return pics;
+    }
+
+    /// <summary>Width and height from a PNG's IHDR or a JPEG's first SOF marker; null when not found.</summary>
+    internal static (int W, int H)? ImageSize(byte[] b, bool png)
+    {
+        if (png)
+        {
+            return b.Length >= 24 ? (b[16] << 24 | b[17] << 16 | b[18] << 8 | b[19], b[20] << 24 | b[21] << 16 | b[22] << 8 | b[23]) : null;
+        }
+
+        for (int i = 2; i + 9 < b.Length;)
+        {
+            if (b[i] != 0xFF)
+            {
+                return null;
+            }
+
+            int marker = b[i + 1], len = b[i + 2] << 8 | b[i + 3];
+            if (marker is >= 0xC0 and <= 0xCF and not 0xC4 and not 0xC8 and not 0xCC)
+            {
+                return (b[i + 7] << 8 | b[i + 8], b[i + 5] << 8 | b[i + 6]);
+            }
+
+            i += 2 + len;
+        }
+
+        return null;
     }
 
     private static string FString(BinaryReader r)

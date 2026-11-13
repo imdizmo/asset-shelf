@@ -30,7 +30,7 @@ public static class Turntable
             var psi = new ProcessStartInfo("systemd-run")
             {
                 ArgumentList = { "--user", "--scope", "-q", "-p", "MemoryMax=6G", "-p", "MemorySwapMax=0",
-                    "blender", "-b", "--factory-startup", "-P", Path.Combine(blenderDir, "turntable.py"), "--", job },
+                    "blender", "-b", "--factory-startup", "--disable-autoexec", "-P", Path.Combine(blenderDir, "turntable.py"), "--", job },
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
             };

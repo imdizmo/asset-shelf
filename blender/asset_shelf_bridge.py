@@ -55,8 +55,22 @@ def import_file(path):
     elif ext == '.obj':
         bpy.ops.wm.obj_import(filepath=path)
     elif ext == '.blend':
-        with bpy.data.libraries.load(path, link=False) as (src, dst):
-            dst.objects = src.objects
+        # a pack's .blend may carry drivers or scripts: no auto-run while it comes in (preferences not saved)
+        prefs = bpy.context.preferences.filepaths
+        was = prefs.use_scripts_auto_execute
+        prefs.use_scripts_auto_execute = False
+        try:
+            with bpy.data.libraries.load(path, link=False) as (src, dst):
+                dst.objects = src.objects
+        finally:
+            prefs.use_scripts_auto_execute = was
+        # Python-expression drivers would still run later if auto-run is on in this Blender: drop them from what came in
+        for o in dst.objects:
+            for idb in filter(None, [o, getattr(o, 'data', None), *[s.material for s in getattr(o, 'material_slots', []) if s.material]]):
+                ad = getattr(idb, 'animation_data', None)
+                for fc in list(ad.drivers) if ad else []:
+                    if fc.driver.type == 'SCRIPTED':
+                        ad.drivers.remove(fc)
         for o in dst.objects:
             if o is not None:
                 bpy.context.scene.collection.objects.link(o)

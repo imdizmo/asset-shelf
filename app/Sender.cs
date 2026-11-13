@@ -209,7 +209,7 @@ public static class Sender
             {
                 "--user", "--collect", "-q", "-p", "MemoryMax=16G", "-p", "MemorySwapMax=0",
                 "--setenv=DISPLAY", "--setenv=WAYLAND_DISPLAY", "--setenv=XDG_RUNTIME_DIR",
-                "blender", "--python", Path.Combine(blenderDir, "open_in_blender.py"), "--", job,
+                "blender", "--disable-autoexec", "--python", Path.Combine(blenderDir, "open_in_blender.py"), "--", job,
             },
         };
         using Process? p = Process.Start(psi);

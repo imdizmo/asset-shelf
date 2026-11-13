@@ -94,7 +94,7 @@ public static class UnitySender
             var psi = new ProcessStartInfo("systemd-run")
             {
                 ArgumentList = { "--user", "--scope", "-q", "-p", "MemoryMax=6G", "-p", "MemorySwapMax=0",
-                    "blender", "-b", "--factory-startup", "-P", Path.Combine(blenderDir, "unity_prep.py"), "--", job },
+                    "blender", "-b", "--factory-startup", "--disable-autoexec", "-P", Path.Combine(blenderDir, "unity_prep.py"), "--", job },
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
             };

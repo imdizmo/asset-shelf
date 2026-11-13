@@ -1307,7 +1307,10 @@ public sealed class MainWindow : Window
         Control big;
         if (item.Thumb is not null && File.Exists(item.Thumb))
         {
-            big = new Image { Stretch = Stretch.Uniform, Source = new Avalonia.Media.Imaging.Bitmap(item.Thumb) };
+            // decoded at a bounded width: pictures come from third-party files and may claim any size
+            var img = new Image { Stretch = Stretch.Uniform };
+            Thumbs.Get(item.Thumb, b => img.Source = b, 600);
+            big = img;
         }
         else
         {

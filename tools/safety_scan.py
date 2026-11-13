@@ -38,15 +38,22 @@ def ini_texts(b):
     return [t.replace('\x00', '').replace('\r\n', '\n').replace('\r', '\n') for t in texts], clean
 
 
-def modules(path):
-    """The code modules a .uplugin/.uproject declares; raises on anything that is not the expected JSON shape."""
+def descriptor(path):
+    """(code modules, build-step commands) a .uplugin/.uproject declares; raises on anything not the expected shape."""
     obj = json.load(open(path))
     if not isinstance(obj, dict):
         raise ValueError('not a JSON object')
     mods = obj.get('Modules') or []
     if not isinstance(mods, list):
         raise ValueError('Modules is not a list')
-    return [m.get('Name', '?') if isinstance(m, dict) else '?' for m in mods]
+    steps = []
+    for k in ('PreBuildSteps', 'PostBuildSteps'):  # shell commands Unreal runs when it builds the project or plugin
+        v = obj.get(k)
+        if isinstance(v, dict):
+            steps += [str(c) for cmds in v.values() for c in (cmds if isinstance(cmds, list) else [cmds])]
+        elif v:
+            steps.append(str(v))
+    return [m.get('Name', '?') if isinstance(m, dict) else '?' for m in mods], steps
 
 
 def scan(pack):
@@ -82,14 +89,12 @@ def scan(pack):
                     add('review', 'Config mentions Python start-up settings', p)
                 if not clean:
                     add('review', 'Config file that does not read as clean text (encoding or NUL bytes)', p)
-        elif ext == '.uplugin':
-            mods = modules(p)
+        elif ext in ('.uplugin', '.uproject'):
+            mods, steps = descriptor(p)
             if mods:
-                add('review', 'Plugin with code modules', p, ', '.join(mods))
-        elif ext == '.uproject':
-            mods = modules(p)
-            if mods:
-                add('review', 'Project with C++ modules', p, ', '.join(mods))
+                add('review', ('Plugin' if ext == '.uplugin' else 'Project') + ' with code modules', p, ', '.join(mods))
+            if steps:
+                add('danger', 'Build steps: shell commands Unreal runs when building', p, ' | '.join(steps)[:300])
         elif ext == '.zip':
             names = zipfile.ZipFile(p).namelist()
             bad = [n for n in names if os.path.splitext(n.lower())[1] in EXEC or n.lower().endswith('init_unreal.py')]
