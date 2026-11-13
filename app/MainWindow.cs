@@ -1337,7 +1337,7 @@ public sealed class MainWindow : Window
         _details.Children.Add(open);
 
         var notes = new FoldGroup("Notes", open: _keep.Notes.ContainsKey(Collections.Key(item)));
-        var note = new TextBox { Text = _keep.Notes.GetValueOrDefault(Collections.Key(item)) ?? "", AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinHeight = 60, FontSize = Look.Theme.Label, Watermark = "Your note about this asset" };
+        var note = new TextBox { Text = _keep.Notes.GetValueOrDefault(Collections.Key(item)) ?? "", AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinHeight = 60, FontSize = Look.Theme.Label, PlaceholderText = "Your note about this asset" };
         note.LostFocus += (_, _) =>
         {
             string k = Collections.Key(item), t = (note.Text ?? "").Trim();

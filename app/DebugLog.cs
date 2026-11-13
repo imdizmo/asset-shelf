@@ -125,7 +125,7 @@ public sealed class LogWindow : Window
         {
             Log.Clear();
             _all.Clear();
-            Show();
+            Refill();
         };
         Button copy = Chrome.TextButton("Copy", "Copy the lines shown to the clipboard.");
         copy.Click += async (_, _) =>
@@ -136,7 +136,7 @@ public sealed class LogWindow : Window
             }
         };
         _filter.Width = 280;
-        _filter.Box.TextChanged += (_, _) => Show();
+        _filter.Box.TextChanged += (_, _) => Refill();
         var bar = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(10, 8), Children = { _filter, _follow, clear, copy, _count } };
         var dock = new DockPanel();
         DockPanel.SetDock(bar, Dock.Top);
@@ -154,7 +154,7 @@ public sealed class LogWindow : Window
         // lines arrive from any thread, often in bursts: gather them and redraw a few times a second
         _flush.Tick += (_, _) => Flush();
         _flush.Start();
-        Show();
+        Refill();
     }
 
     private void OnAdded(Log.Entry e)
@@ -183,7 +183,7 @@ public sealed class LogWindow : Window
             _all.RemoveRange(0, _all.Count - Log.Max);
         }
 
-        Show();
+        Refill();
     }
 
     private IEnumerable<Log.Entry> Shown()
@@ -192,7 +192,7 @@ public sealed class LogWindow : Window
         return f.Length == 0 ? _all : _all.Where(e => e.Area.Contains(f, StringComparison.OrdinalIgnoreCase) || e.Text.Contains(f, StringComparison.OrdinalIgnoreCase));
     }
 
-    private void Show()
+    private void Refill()
     {
         List<Log.Entry> shown = [.. Shown()];
         _list.ItemsSource = shown;
