@@ -18,7 +18,7 @@ public static class Turntable
     private static string Root => Path.Combine(Path.GetDirectoryName(Sender.Outbox())!, "turntables");
 
     /// <summary>The frames, rendering them first when they are not in the cache.</summary>
-    public static async Task<List<string>> FramesAsync(Item item, IReadOnlyList<string> files, string? texDir, bool unreal, string blenderDir)
+    public static async Task<List<string>> FramesAsync(Item item, IReadOnlyList<string> files, string? texDir, bool unreal, string blenderDir, Settings settings)
     {
         string dir = Sender.CacheDir(Root, item);
         if (!File.Exists(Path.Combine(dir, ".done")))
@@ -27,13 +27,9 @@ public static class Turntable
             string job = Path.Combine(dir, "job.json");
             await File.WriteAllTextAsync(job, JsonSerializer.Serialize(new { name = item.Name, files, textures = texDir, unreal, @out = dir, frames = 24, size = 384 })).ConfigureAwait(false);
             using var step = Log.Time("turntable", $"{item.Name}: 24 frames");
-            var psi = new ProcessStartInfo("systemd-run")
-            {
-                ArgumentList = { "--user", "--scope", "-q", "-p", "MemoryMax=6G", "-p", "MemorySwapMax=0",
-                    "blender", "-b", "--factory-startup", "--disable-autoexec", "-P", Path.Combine(blenderDir, "turntable.py"), "--", job },
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-            };
+            ProcessStartInfo psi = Run.Capped("6G", false, Run.Blender(settings), "-b", "--factory-startup", "--disable-autoexec", "-P", Path.Combine(blenderDir, "turntable.py"), "--", job);
+            psi.RedirectStandardOutput = true;
+            psi.RedirectStandardError = true;
             using Process p = Process.Start(psi)!;
             string err = await p.StandardError.ReadToEndAsync().ConfigureAwait(false);
             await p.StandardOutput.ReadToEndAsync().ConfigureAwait(false);

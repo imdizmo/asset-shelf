@@ -10,6 +10,9 @@ public sealed class Settings
     public string UnrealProject { get; set; } = "";
     public string Tools { get; set; } = "";
 
+    /// <summary>Blender's executable; empty: "blender" on the PATH.</summary>
+    public string Blender { get; set; } = "";
+
     /// <summary>The Unity project to send to (the folder holding Assets/).</summary>
     public string UnityProject { get; set; } = "";
 

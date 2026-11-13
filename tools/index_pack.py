@@ -28,6 +28,23 @@ unreal.register_slate_post_tick_callback(tick)
 '''
 
 
+def editor(engine, cmd=False):
+    """Unreal's editor binary for this system (Linux, Windows, macOS)."""
+    name = 'UnrealEditor-Cmd' if cmd else 'UnrealEditor'
+    if sys.platform.startswith('win'):
+        return os.path.join(engine, 'Engine', 'Binaries', 'Win64', name + '.exe')
+    if sys.platform == 'darwin':
+        return os.path.join(engine, 'Engine', 'Binaries', 'Mac', name)
+    return os.path.join(engine, 'Engine', 'Binaries', 'Linux', name)
+
+
+def capped(memory, cmd):
+    """The command under a memory cap where systemd can do it, as it is elsewhere."""
+    if sys.platform.startswith('linux') and shutil.which('systemd-run'):
+        return ['systemd-run', '--user', '--scope', '-q', '-p', f'MemoryMax={memory}', '-p', 'MemorySwapMax=0', *cmd]
+    return cmd
+
+
 @contextlib.contextmanager
 def host_lock(host):
     """One editor job on the host project at a time (indexing and FBX exports share it)."""
@@ -105,7 +122,7 @@ def run(o):
     if any(re.search(r'[\s"\'=+]', r) for r in roots):
         sys.exit('refusing content folder names with spaces, quotes, = or +: ' + ', '.join(roots))
     if o.embedded and not o.no_pictures:
-        exe = os.path.join(o.engine, 'Engine', 'Binaries', 'Linux', 'UnrealEditor-Cmd')
+        exe = editor(o.engine, cmd=True)
         cmd = [exe, up, '-run=AssetShelfIndex', '-Roots=' + '+'.join(roots), '-Out=' + out, '-Embedded', '-nullrhi',
                '-notraceserver', '-unattended', '-nosplash', '-nosound', '-stdout', '-FullStdOutLogOutput']
         r = subprocess.run(cmd, env=env)
@@ -117,7 +134,7 @@ def run(o):
     script = os.path.join(o.host, 'Saved', 'asset_shelf_run.py')
     os.makedirs(os.path.dirname(script), exist_ok=True)
     open(script, 'w').write(RUN.format(roots=roots, out=out, size=0 if o.no_pictures else o.size))
-    exe = os.path.join(o.engine, 'Engine', 'Binaries', 'Linux', 'UnrealEditor')
+    exe = editor(o.engine)
     cmd = [exe, up, '-RenderOffscreen', '-notraceserver', '-unattended', '-nosplash', '-nosound', '-stdout', '-FullStdOutLogOutput',
            f'-ExecCmds=py {script}']  # not -ExecutePythonScript: that quits as soon as the script returns
     # its own derived-data cache, so indexing never fills the one the user's own projects share

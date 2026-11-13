@@ -22,12 +22,29 @@ def log(*a):
     print(time.strftime('%H:%M:%S'), *a, flush=True)
 
 
+KEY_FILE = os.path.expanduser('~/.config/asset-shelf/itch.key')
+
+
 def key():
-    for args in (['service', 'asset-shelf', 'account', 'itch'], ['service', 'itch']):  # the second: an older setup
-        r = subprocess.run(['secret-tool', 'lookup', *args], capture_output=True, text=True)
-        if r.stdout.strip():
-            return r.stdout.strip()
+    if shutil.which('secret-tool'):
+        for args in (['service', 'asset-shelf', 'account', 'itch'], ['service', 'itch']):  # the second: an older setup
+            r = subprocess.run(['secret-tool', 'lookup', *args], capture_output=True, text=True)
+            if r.stdout.strip():
+                return r.stdout.strip()
+    if os.path.exists(KEY_FILE):
+        return open(KEY_FILE).read().strip()
     sys.exit('no itch.io API key: run "itch_sync.py login -" with the key on stdin')
+
+
+def store_key(k):
+    """The system keyring where there is one (secret-tool); otherwise a file only the user can read."""
+    if shutil.which('secret-tool'):
+        subprocess.run(['secret-tool', 'store', '--label', 'Asset Shelf: itch.io', 'service', 'asset-shelf', 'account', 'itch'], input=k, text=True, check=True)
+        return
+    os.makedirs(os.path.dirname(KEY_FILE), exist_ok=True)
+    fd = os.open(KEY_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, 'w') as f:
+        f.write(k)
 
 
 def api(path):
@@ -293,7 +310,7 @@ def main():
         me = json.load(urllib.request.urlopen(urllib.request.Request('https://api.itch.io/profile', headers={'Authorization': 'Bearer ' + k}), timeout=30))
         if 'user' not in me:
             sys.exit('itch.io did not accept that key')
-        subprocess.run(['secret-tool', 'store', '--label', 'Asset Shelf: itch.io', 'service', 'asset-shelf', 'account', 'itch'], input=k, text=True, check=True)
+        store_key(k)
         print(f"signed in as {me['user'].get('username')}")
         return
     if not args or args[0] != 'sync' or not opt('--packs') or not opt('--index'):

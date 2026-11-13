@@ -1,0 +1,50 @@
+# Builds Asset Shelf for Linux and Windows. A pushed tag v* publishes a GitHub release with both packages; running it
+# by hand (Actions > Release > Run workflow) only builds them and keeps them as workflow artifacts.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73  # v6.1.0
+        with:
+          dotnet-version: '10.0.x'
+      - name: Version
+        id: version
+        run: echo "version=${GITHUB_REF_NAME}" | sed 's#/#-#g' >> "$GITHUB_OUTPUT"
+      - name: Package for Linux
+        run: scripts/package.sh linux-x64 "${{ steps.version.outputs.version }}" dist
+      - name: Package for Windows
+        run: scripts/package.sh win-x64 "${{ steps.version.outputs.version }}" dist
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: packages
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+          retention-days: 14
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        with:
+          name: packages
+          path: dist
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --title "Asset Shelf $GITHUB_REF_NAME" --generate-notes

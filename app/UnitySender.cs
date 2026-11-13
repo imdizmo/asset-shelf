@@ -91,13 +91,9 @@ public static class UnitySender
             using var step = Log.Time("unity", $"{item.Name}: {pipeline}, into {Path.GetRelativePath(settings.UnityProject, dest)}");
             string job = Path.Combine(prep, "job.json");
             await File.WriteAllTextAsync(job, JsonSerializer.Serialize(new { files = models, textures = texDir, unreal, @out = prep, pipeline })).ConfigureAwait(false);
-            var psi = new ProcessStartInfo("systemd-run")
-            {
-                ArgumentList = { "--user", "--scope", "-q", "-p", "MemoryMax=6G", "-p", "MemorySwapMax=0",
-                    "blender", "-b", "--factory-startup", "--disable-autoexec", "-P", Path.Combine(blenderDir, "unity_prep.py"), "--", job },
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-            };
+            ProcessStartInfo psi = Run.Capped("6G", false, Run.Blender(settings), "-b", "--factory-startup", "--disable-autoexec", "-P", Path.Combine(blenderDir, "unity_prep.py"), "--", job);
+            psi.RedirectStandardOutput = true;
+            psi.RedirectStandardError = true;
             using (Process p = Process.Start(psi)!)
             {
                 string err = await p.StandardError.ReadToEndAsync().ConfigureAwait(false);

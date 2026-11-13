@@ -129,7 +129,7 @@ public static class Sender
 
     /// <summary>Exports an Unreal asset to FBX (with its textures as PNG) through the tools' headless editor.</summary>
     /// <returns>The export folder and the FBX files in it.</returns>
-    public static async Task<(string Dir, List<string> Fbx)> ExportAsync(Item item, string toolsDir)
+    public static async Task<(string Dir, List<string> Fbx)> ExportAsync(Item item, Settings settings)
     {
         string outDir = CacheDir(Path.Combine(Path.GetDirectoryName(Outbox())!, "exports"), item);
         // the asset and every package it needs: only these are copied out of the pack, so Unreal scans a handful of files
@@ -145,9 +145,9 @@ public static class Sender
             packages = needs.Select(i => i.Package).Prepend(item.Package).ToList(),
             textures = needs.Where(i => i.Class == "Texture2D").Select(i => i.Path).ToList(),
         })).ConfigureAwait(false);
-        var psi = new ProcessStartInfo("python3")
+        var psi = new ProcessStartInfo(Run.Python(settings))
         {
-            ArgumentList = { "-I", "-u", Path.Combine(toolsDir, "export_fbx.py"), "--job", jobFile },
+            ArgumentList = { "-I", "-u", Path.Combine(settings.Tools, "export_fbx.py"), "--job", jobFile },
             RedirectStandardOutput = true,
             RedirectStandardError = true,
         };
@@ -186,9 +186,9 @@ public static class Sender
     }
 
     /// <summary>Exports an Unreal asset to FBX and hands it to the open Blender.</summary>
-    public static async Task<string> UnrealToBlenderAsync(Item item, string toolsDir)
+    public static async Task<string> UnrealToBlenderAsync(Item item, Settings settings)
     {
-        var (dir, fbx) = await ExportAsync(item, toolsDir).ConfigureAwait(false);
+        var (dir, fbx) = await ExportAsync(item, settings).ConfigureAwait(false);
         ToBlender(item.Name, fbx, dir, unreal: true);
         return dir;
     }
@@ -197,21 +197,13 @@ public static class Sender
     /// Starts a new Blender window holding only these files (blender/open_in_blender.py imports them into an empty
     /// scene). Blender runs as its own user service with a memory cap, so it outlives the app.
     /// </summary>
-    public static void OpenInBlender(string name, IReadOnlyList<string> files, string? textureDir, string blenderDir, bool unreal = false)
+    public static void OpenInBlender(string name, IReadOnlyList<string> files, string? textureDir, string blenderDir, Settings settings, bool unreal = false)
     {
         string box = Path.Combine(Path.GetDirectoryName(Outbox())!, "open");
         Directory.CreateDirectory(box);
         string job = Path.Combine(box, $"{DateTime.Now:yyyyMMdd-HHmmss-fff}.json");
         File.WriteAllText(job, JsonSerializer.Serialize(new { name, files, textures = textureDir, unreal }));
-        var psi = new ProcessStartInfo("systemd-run")
-        {
-            ArgumentList =
-            {
-                "--user", "--collect", "-q", "-p", "MemoryMax=16G", "-p", "MemorySwapMax=0",
-                "--setenv=DISPLAY", "--setenv=WAYLAND_DISPLAY", "--setenv=XDG_RUNTIME_DIR",
-                "blender", "--disable-autoexec", "--python", Path.Combine(blenderDir, "open_in_blender.py"), "--", job,
-            },
-        };
+        ProcessStartInfo psi = Run.Capped("16G", true, Run.Blender(settings), "--disable-autoexec", "--python", Path.Combine(blenderDir, "open_in_blender.py"), "--", job);
         using Process? p = Process.Start(psi);
         Log.Write("blender", $"new window for {name}: {files.Count} file(s), job {Path.GetFileName(job)}");
     }

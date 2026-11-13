@@ -12,7 +12,9 @@ started again at any time.
 import argparse, os, shutil, signal, subprocess, sys, time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-SHELF_INDEX = os.path.join(HERE, 'ShelfIndex', 'bin', 'Release', 'net10.0', 'ShelfIndex.dll')  # dotnet build -c Release tools/ShelfIndex
+# a release ships ShelfIndex as a program beside its sources; from source it is built with dotnet build -c Release
+_PACKAGED = os.path.join(HERE, 'ShelfIndex', 'ShelfIndex.exe' if sys.platform.startswith('win') else 'ShelfIndex')
+SHELF_INDEX_CMD = [_PACKAGED] if os.path.isfile(_PACKAGED) else ['dotnet', os.path.join(HERE, 'ShelfIndex', 'bin', 'Release', 'net10.0', 'ShelfIndex.dll')]
 DDC_LIMIT = 30e9
 
 
@@ -78,7 +80,7 @@ def main():
         print(time.strftime('%H:%M:%S'), 'START', n, 'unreal' if ue else 'raw', flush=True)
         with open(log, 'w') as f:
             if ue and not o.unreal:
-                ok = run(['dotnet', SHELF_INDEX, '--pack', os.path.join(src, 'unreal'), '--out', out], f, o.timeout)
+                ok = run([*SHELF_INDEX_CMD, '--pack', os.path.join(src, 'unreal'), '--out', out], f, o.timeout)
             elif ue:
                 cmd = [sys.executable, '-I', os.path.join(HERE, 'index_pack.py'), '--host', o.host, '--pack', os.path.join(src, 'unreal'), '--out', out]
                 if o.embedded:

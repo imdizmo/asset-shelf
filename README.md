@@ -29,11 +29,20 @@ Status: 0.1, used daily on Linux; Windows and macOS are untested.
   and checked file by file, then indexed. A preview first; nothing is downloaded until you say so.
 - **Debug log** (View > Debug log, Ctrl+Shift+L): every step with its timing.
 
+## Download
+
+Releases have a package for Linux (x64, `.tar.gz`) and Windows (x64, `.zip`): unpack it anywhere and run `AssetShelf`
+(`AssetShelf.exe`). .NET is included. Blender, Python and Unreal are found on the `PATH` or set in `settings.json`
+(`Blender`). Windows builds are made by the same CI but not yet tested on Windows; reports are welcome.
+
+To make a release: push a tag such as `v0.2.0` (`.github/workflows/release.yml` builds both packages with
+`scripts/package.sh` and publishes them).
+
 ## Requirements
 
 | For | Needs |
 |---|---|
-| The app | .NET 10 SDK |
+| The app | nothing for a release package; the .NET 10 SDK to build from source |
 | Indexing Unreal packs | nothing more (ShelfIndex, .NET) |
 | Exporting Unreal assets to Blender/Unity | Unreal Engine 5 (`~/UnrealEngine` or set `--engine`) |
 | Loose files, materials, turntables, Unity prep | Blender 5.1 or later on the `PATH` |

@@ -15,7 +15,7 @@ oldest first.
 import argparse, json, os, re, shutil, subprocess, sys, time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from index_pack import host_lock  # noqa: E402
+from index_pack import capped, editor, host_lock  # noqa: E402
 
 CACHE_MAX = 5 << 30
 NEEDS_RENDERER = ('SkeletalMesh', 'AnimSequence', 'AnimMontage', 'AnimComposite')
@@ -132,17 +132,14 @@ def main():
         open(script, 'w').write(UE_SCRIPT.format(path=job['asset'], out=out, textures=job.get('textures', []),
                                                  cls=job.get('class', ''), quit=renderer))
         if renderer:  # exporting a skeletal mesh asserts without a renderer
-            exe = os.path.join(o.engine, 'Engine', 'Binaries', 'Linux', 'UnrealEditor')
-            cmd = [exe, up, '-RenderOffscreen', f'-ExecCmds=py {script}']
+            cmd = [editor(o.engine), up, '-RenderOffscreen', f'-ExecCmds=py {script}']
         else:
-            exe = os.path.join(o.engine, 'Engine', 'Binaries', 'Linux', 'UnrealEditor-Cmd')
-            cmd = [exe, up, '-run=pythonscript', f'-script={script}', '-nullrhi']
+            cmd = [editor(o.engine, cmd=True), up, '-run=pythonscript', f'-script={script}', '-nullrhi']
         cmd += ['-unattended', '-nosplash', '-nosound', '-notraceserver', '-stdout']
         env = dict(os.environ, **{'UE-LocalDataCachePath': os.path.join(os.path.dirname(os.path.abspath(o.host)), 'ddc')})
         log = os.path.join(o.host, 'Saved', 'asset_shelf_export.log')
         with open(log, 'w') as f:  # a file, not a pipe: the editor's forked trace server can keep a pipe open
-            subprocess.run(['systemd-run', '--user', '--scope', '-q', '-p', 'MemoryMax=8G', '-p', 'MemorySwapMax=0', *cmd],
-                           stdout=f, stderr=subprocess.STDOUT, env=env)
+            subprocess.run(capped('8G', cmd), stdout=f, stderr=subprocess.STDOUT, env=env)
     text = open(log, errors='replace').read()
     lines = [l for l in text.splitlines() if 'ASSETSHELF' in l]
     print(f'{n} files staged, {time.time() - t0:.0f}s, {"editor" if renderer else "command line"}')

@@ -12,18 +12,12 @@ namespace AssetShelf;
 /// going to the debug log and to <paramref name="line"/>.</summary>
 public static class FabSync
 {
-    public static string Python(Settings s) =>
-        File.Exists(Path.Combine(s.Tools, ".venv", "bin", "python")) ? Path.Combine(s.Tools, ".venv", "bin", "python") : "python3";
-
     public static async Task<int> RunAsync(Settings s, string script, IEnumerable<string> args, Action<string> line, string memory = "2G", string? stdin = null)
     {
-        var psi = new ProcessStartInfo("systemd-run")
-        {
-            ArgumentList = { "--user", "--scope", "-q", "-p", $"MemoryMax={memory}", "-p", "MemorySwapMax=0", Python(s), "-I", "-u", Path.Combine(s.Tools, script) },
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            RedirectStandardInput = stdin is not null,
-        };
+        ProcessStartInfo psi = Run.Capped(memory, false, Run.Python(s), "-I", "-u", Path.Combine(s.Tools, script));
+        psi.RedirectStandardOutput = true;
+        psi.RedirectStandardError = true;
+        psi.RedirectStandardInput = stdin is not null;
         foreach (string a in args)
         {
             psi.ArgumentList.Add(a);

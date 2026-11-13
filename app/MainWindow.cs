@@ -1639,7 +1639,7 @@ public sealed class MainWindow : Window
 
     private async Task SpinAsync(Item item, Border box, Button button)
     {
-        string blenderDir = Path.Combine(Path.GetDirectoryName(_settings.Tools.TrimEnd('/'))!, "blender");
+        string blenderDir = Path.Combine(Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(_settings.Tools))!, "blender");
         button.IsEnabled = false;
         _status.Text = $"{item.Name}: rendering a turntable{(item.Raw ? "" : " (exporting through Unreal first)")}…";
         Busy(null);
@@ -1649,12 +1649,12 @@ public sealed class MainWindow : Window
             if (item.Raw)
             {
                 var (file, tex) = RawFile(item);
-                frames = await Turntable.FramesAsync(item, [file], tex, unreal: false, blenderDir);
+                frames = await Turntable.FramesAsync(item, [file], tex, unreal: false, blenderDir, _settings);
             }
             else
             {
-                var (dir, fbx) = await Sender.ExportAsync(item, _settings.Tools);
-                frames = await Turntable.FramesAsync(item, fbx, dir, unreal: true, blenderDir);
+                var (dir, fbx) = await Sender.ExportAsync(item, _settings);
+                frames = await Turntable.FramesAsync(item, fbx, dir, unreal: true, blenderDir, _settings);
             }
 
             if (_picked == item)
@@ -1678,21 +1678,21 @@ public sealed class MainWindow : Window
 
     private async Task OpenInBlenderAsync(Item item, Button button)
     {
-        string blenderDir = Path.Combine(Path.GetDirectoryName(_settings.Tools.TrimEnd('/'))!, "blender");
+        string blenderDir = Path.Combine(Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(_settings.Tools))!, "blender");
         button.IsEnabled = false;
         try
         {
             if (item.Raw)
             {
                 var (file, tex) = RawFile(item);
-                Sender.OpenInBlender(item.Name, [file], tex, blenderDir);
+                Sender.OpenInBlender(item.Name, [file], tex, blenderDir, _settings);
             }
             else
             {
                 _status.Text = $"{item.Name}: exporting through Unreal (about 20 seconds)…";
                 Busy(null);
-                var (dir, fbx) = await Sender.ExportAsync(item, _settings.Tools);
-                Sender.OpenInBlender(item.Name, fbx, dir, blenderDir, unreal: true);
+                var (dir, fbx) = await Sender.ExportAsync(item, _settings);
+                Sender.OpenInBlender(item.Name, fbx, dir, blenderDir, _settings, unreal: true);
             }
 
             _status.Text = $"{item.Name}: opening in a new Blender window…";
@@ -1731,7 +1731,7 @@ public sealed class MainWindow : Window
                 else
                 {
                     _status.Text = $"{item.Name}: exporting through Unreal{(targets.Count > 1 ? $" ({sent + 1} of {targets.Count})" : "")}…";
-                    await Sender.UnrealToBlenderAsync(item, _settings.Tools);
+                    await Sender.UnrealToBlenderAsync(item, _settings);
                 }
 
                 sent++;
@@ -1906,7 +1906,7 @@ public sealed class MainWindow : Window
             return;
         }
 
-        string blenderDir = Path.Combine(Path.GetDirectoryName(_settings.Tools.TrimEnd('/'))!, "blender");
+        string blenderDir = Path.Combine(Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(_settings.Tools))!, "blender");
         _toUnity.IsEnabled = false;
         Busy(targets.Count > 1 ? 0 : null);
         var lines = new List<string>();
@@ -1922,7 +1922,7 @@ public sealed class MainWindow : Window
                 }
                 else
                 {
-                    var (dir, fbx) = await Sender.ExportAsync(item, _settings.Tools);
+                    var (dir, fbx) = await Sender.ExportAsync(item, _settings);
                     lines.Add(await UnitySender.SendAsync(item, fbx, dir, unreal: true, _settings, blenderDir));
                 }
 
