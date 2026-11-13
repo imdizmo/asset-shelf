@@ -1,0 +1,13 @@
+bin/
+obj/
+Intermediate/
+Binaries/
+__pycache__/
+.venv/
+
+# personal notes and agent files: kept out of the public repository
+TODO.md
+CLAUDE.md
+CLAUDE.local.md
+*.local.md
+notes/

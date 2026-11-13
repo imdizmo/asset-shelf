@@ -1,0 +1,2 @@
+legendary-gl==0.21.1
+requests

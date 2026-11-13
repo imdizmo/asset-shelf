@@ -1,0 +1,12 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "0.1.0",
+	"FriendlyName": "Asset Shelf",
+	"Description": "Indexes asset packs (types, dependencies, preview pictures) for the Asset Shelf browser and brings picked assets into the open project.",
+	"Category": "Editor",
+	"CreatedBy": "Asset Shelf contributors",
+	"CanContainContent": false,
+	"Modules": [ { "Name": "AssetShelf", "Type": "Editor", "LoadingPhase": "Default" } ],
+	"Plugins": [ { "Name": "Niagara", "Enabled": true } ]
+}

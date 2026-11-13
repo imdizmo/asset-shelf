@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- The browser: a grid of every indexed asset with filters, and the buttons that send one to Unreal or Blender. -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>AssetShelf</AssemblyName>
+    <RootNamespace>AssetShelf</RootNamespace>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <Product>Asset Shelf</Product>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Avalonia" Version="12.1.4" />
+    <PackageReference Include="Avalonia.Desktop" Version="12.1.4" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.4" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="icon.png" CopyToOutputDirectory="PreserveNewest" />
+    <AvaloniaResource Include="Assets\Fonts\*.ttf" />
+  </ItemGroup>
+</Project>

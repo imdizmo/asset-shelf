@@ -1,0 +1,1967 @@
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Controls.Presenters;
+using Avalonia.Controls.Primitives;
+using Avalonia.Controls.Templates;
+using Avalonia.Input;
+using Avalonia.Interactivity;
+using Avalonia.Layout;
+using Avalonia.Media;
+using Avalonia.Platform.Storage;
+using Avalonia.Styling;
+using Avalonia.Threading;
+using AssetShelf.Look;
+
+namespace AssetShelf;
+
+/// <summary>
+/// Prop Generator's layout: a top bar (brand, File/View/Help, the search, Send to Blender and Send to Unreal), the
+/// filters down the left, kind tabs over the picture grid in the middle, the picked asset down the right, a status bar.
+/// </summary>
+public sealed class MainWindow : Window
+{
+    private static readonly (string Kind, string Plural)[] TabKinds =
+    [
+        ("Mesh", "Meshes"), ("Character", "Characters"), ("Animation", "Animations"), ("VFX", "Effects"), ("Sound", "Sounds"),
+        ("Blueprint", "Blueprints"), ("Map", "Maps"), ("Material", "Materials"), ("Texture", "Textures"), ("Other", "Other"),
+    ];
+
+    private readonly Settings _settings;
+    private Library _lib = new();
+    private List<Item> _shown = [];
+    private Item? _picked;
+    private string? _kind;  // null: All (the default kinds)
+    private double _picture = 128;
+
+    private readonly SearchField _search = new("Search assets, packs, tags…", "Type words from an asset's name, its pack or its tags; every word must match. Esc clears it.", "Ctrl+K");
+    private readonly SearchField _tagFilter = new("Filter tags", "Type part of a tag to find it in the list.");
+    private readonly SearchField _packFilter = new("Filter packs", "Type part of a pack's name or seller to find it in the list.") { Margin = new Thickness(0, 2, 0, 6) };
+    private readonly StackPanel _packRows = new() { Spacing = 1 };
+    private readonly FoldGroup _tagsGroup = new("Tags");
+    private readonly FoldGroup _packsGroup = new("Packs", open: false);
+    private readonly FoldGroup _licenceGroup = new("Licence");
+    private readonly WrapPanel _activeTags = new() { Margin = new Thickness(8, 8, 8, 2) };
+    private readonly HashSet<string> _packOff = [];
+    private readonly HashSet<string> _licenceOff = [];
+    private readonly HashSet<string> _tagOn = new(StringComparer.OrdinalIgnoreCase);
+    private readonly WrapPanel _tabs = new() { ItemSpacing = 2, LineSpacing = 2 };  // wraps when narrow: a scrollbar here covered the tabs
+    private readonly ListBox _grid = new();
+    private readonly StackPanel _details = new();
+    private readonly TextBlock _status = new() { FontSize = Look.Theme.Caption, Foreground = Look.Theme.TextSecondary, VerticalAlignment = VerticalAlignment.Center };
+    private readonly TextBlock _counts = new() { FontSize = Look.Theme.Caption, Foreground = Look.Theme.TextTertiary, VerticalAlignment = VerticalAlignment.Center };
+    private readonly Button _projectButton = Chrome.TextButton("", "The Unreal project assets are sent to. Click to pick another.");
+    private readonly TextBlock _libraryCaption = new() { FontSize = Look.Theme.Caption, Foreground = Look.Theme.TextTertiary, VerticalAlignment = VerticalAlignment.Center };
+    private readonly Button _toUnity = Chrome.IconTextButton("box", "Send to Unity", "Copy the picked asset into the Unity project with its textures and materials for the project's render pipeline.");
+    private readonly Button _toBlender = Chrome.IconTextButton("send", "Send to Blender", "Import the picked asset into the open Blender (the Asset Shelf Bridge add-on picks it up).");
+    private readonly Button _toUnreal = Chrome.PrimaryButton("download", "Send to Unreal", "Copy the picked asset and everything it needs into the Unreal project's Content folder.");
+    private readonly DispatcherTimer _searchDelay = new() { Interval = TimeSpan.FromMilliseconds(180) };
+    private readonly Dictionary<Item, Border> _tileOf = [];
+    private readonly Collections _keep = Collections.Load();
+    private string? _collection;                      // showing only this collection (Favourites included), or all
+    private readonly FoldGroup _keepGroup = new("Collections");
+    private readonly HashSet<Item> _selected = [];  // Ctrl/Shift-clicked tiles, sent together; holds the picked one too
+    private Item? _anchor;                            // where a Shift-click range starts
+    private HashSet<string> _inProject = new(StringComparer.OrdinalIgnoreCase);  // packages already in the Unreal project
+    private List<(CheckBox Box, List<Item> Items)> _extras = [];
+    private int _perRow = 1;
+    private readonly PacksView _packsView = new();
+    private readonly ContentControl _middle = new();
+    private readonly ScrollViewer _rightScroll = new();
+    private Border _leftPanel = null!;
+    private Border _rightPanel = null!;
+    private Control _assetsMiddle = null!;
+    private readonly Tab _assetsTab = new("Assets", "Every asset of every pack, by kind.");
+    private readonly Tab _packsTabTop = new("Packs", "Every pack in the library, with its store pictures.");
+    private bool _packsMode;
+    private readonly ProgressBar _progress = new()
+    {
+        Width = 180,
+        Height = 4,
+        MinHeight = 4,
+        Margin = new Thickness(12, 0, 0, 0),
+        VerticalAlignment = VerticalAlignment.Center,
+        Foreground = Look.Theme.Accent,
+        Background = Look.Theme.SurfaceRaised,
+        IsVisible = false,
+    };
+
+    public MainWindow(Settings settings, Library lib)
+    {
+        _settings = settings;
+        _lib = lib;
+        Title = "Asset Shelf";
+        Width = 1560;
+        Height = 960;
+        MinWidth = 900;
+        MinHeight = 560;
+        Background = Look.Theme.SurfacePage;
+        string icon = Path.Combine(AppContext.BaseDirectory, "icon.png");
+        if (File.Exists(icon))
+        {
+            Icon = new WindowIcon(icon);
+        }
+
+        _projectButton.Height = 20;
+        _projectButton.Click += async (_, _) => await PickProjectAsync();
+
+        _grid.ItemTemplate = new FuncDataTemplate<Item[]?>((row, _) => MakeRow(row), supportsRecycling: false);
+        _grid.ItemsPanel = new FuncTemplate<Panel?>(() => new VirtualizingStackPanel());
+        _grid.Background = Brushes.Transparent;
+        _grid.Padding = new Thickness(8, 6, 8, 8);
+        _grid.Styles.Add(new Style(x => x.OfType<ListBoxItem>())
+        {
+            Setters = { new Setter(PaddingProperty, new Thickness(0)), new Setter(MinHeightProperty, 0.0) },
+        });
+        foreach (string state in new[] { ":pointerover", ":selected", ":selected:pointerover", ":pressed" })
+        {
+            _grid.Styles.Add(new Style(x => x.OfType<ListBoxItem>().Class(state).Template().OfType<ContentPresenter>())
+            {
+                Setters = { new Setter(ContentPresenter.BackgroundProperty, Brushes.Transparent) },
+            });
+        }
+
+        _grid.SizeChanged += (_, e) => Relayout(e.NewSize.Width);
+        _searchDelay.Tick += (_, _) =>
+        {
+            _searchDelay.Stop();
+            Refresh();
+        };
+        _search.Box.TextChanged += (_, _) =>
+        {
+            _searchDelay.Stop();
+            _searchDelay.Start();
+        };
+        _tagFilter.Box.TextChanged += (_, _) => FillTags();
+        _packFilter.Box.TextChanged += (_, _) =>
+        {
+            FillPacksAndLicences();
+            GroupActions();
+        };
+        _toBlender.Click += async (_, _) => await SendToBlenderAsync();
+        _toUnity.Click += async (_, _) => await SendToUnityAsync();
+        _toUnreal.Click += async (_, _) => await SendToUnrealAsync();
+        KeyDown += (_, e) =>
+        {
+            if (e.KeyModifiers == KeyModifiers.Alt && e.Key is Key.Left or Key.Right)
+            {
+                Step(e.Key == Key.Left ? -1 : 1);
+                e.Handled = true;
+                return;
+            }
+
+            if (e.KeyModifiers == (KeyModifiers.Control | KeyModifiers.Shift) && e.Key == Key.L)
+            {
+                LogWindow.Open(this);
+                e.Handled = true;
+                return;
+            }
+
+            if (e.KeyModifiers != KeyModifiers.Control)
+            {
+                return;
+            }
+
+            if (e.Key == Key.K)
+            {
+                _search.Box.Focus();
+                _search.Box.SelectAll();
+                e.Handled = true;
+            }
+            else if (e.Key == Key.R)
+            {
+                _ = ReloadAsync();
+                e.Handled = true;
+            }
+            else if (e.Key == Key.Q)
+            {
+                Close();
+                e.Handled = true;
+            }
+        };
+
+        var root = new Grid { RowDefinitions = new RowDefinitions($"{Look.Theme.MenuBarHeight},*,{Look.Theme.StatusBarHeight}") };
+        root.Children.Add(TopBar());
+        Control body = Body();
+        Grid.SetRow(body, 1);
+        root.Children.Add(body);
+        Control status = StatusBar();
+        Grid.SetRow(status, 2);
+        root.Children.Add(status);
+        Content = root;
+
+        _packsView.ShowAssets += (p, item) =>
+        {
+            SetMode(packs: false);
+            OnlyPack(p);
+            if (item is not null)
+            {
+                Pick(item);
+                ScrollTo(item);
+            }
+        };
+        _packsView.Picked += _ => Record();
+        // the mouse's back and forward buttons, and Alt+Left/Right
+        AddHandler(PointerPressedEvent, (_, e) =>
+        {
+            PointerUpdateKind k = e.GetCurrentPoint(this).Properties.PointerUpdateKind;
+            if (k is PointerUpdateKind.XButton1Pressed or PointerUpdateKind.XButton2Pressed)
+            {
+                Step(k == PointerUpdateKind.XButton1Pressed ? -1 : 1);
+                e.Handled = true;
+            }
+        }, RoutingStrategies.Tunnel, handledEventsToo: true);
+        _packsView.OpenPage += async u => await Launcher.LaunchUriAsync(u);
+        _packsView.Changed += () => _counts.Text = $"{_packsView.ShownCount:N0} packs shown";
+
+        ShowDetails(null);
+        UseLibrary();
+        _ = ScanProjectAsync();
+    }
+
+    /// <summary>Learns which packages the Unreal project already has (its Content folder), for the badges and the send preview.</summary>
+    private async Task ScanProjectAsync()
+    {
+        string project = _settings.UnrealProject;
+        if (project.Length == 0)
+        {
+            _inProject = new(StringComparer.OrdinalIgnoreCase);
+            return;
+        }
+
+        using (var step = Log.Time("unreal", $"scan {project}"))
+        {
+            _inProject = await Task.Run(() => Sender.ProjectPackages(project));
+            step.Then($"{_inProject.Count:N0} packages already in {Path.GetFileName(project.TrimEnd('/'))}");
+        }
+
+        FillGrid();
+        if (_picked is { } item)
+        {
+            ShowDetails(item);
+        }
+    }
+
+    // The bar in the status line: a fraction from 0 to 1, or null for "busy, length unknown"; hidden when done.
+    private void Busy(double? fraction)
+    {
+        _progress.IsVisible = true;
+        _progress.IsIndeterminate = fraction is null;
+        _progress.Maximum = 1;
+        _progress.Value = fraction ?? 0;
+    }
+
+    private void Idle() => _progress.IsVisible = false;
+
+    // ---- layout ----
+
+    private Control TopBar()
+    {
+        var brand = new Button
+        {
+            Width = 24,
+            Height = 24,
+            MinHeight = 0,
+            MinWidth = 0,
+            Padding = new Thickness(0),
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+            VerticalContentAlignment = VerticalAlignment.Center,
+            Content = new Icon("layout-grid", 14),
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        brand.Classes.Add("ep");
+        brand.Classes.Add("ep-primary");
+        Chrome.Tip(brand, "Show everything: clear the search, the tags and the kind tab.");
+        brand.Click += (_, _) => ClearFilters();
+
+        Button file = Menu("File", "Reload the library, pick the Unreal project, quit.",
+            ("Reload library", "Ctrl+R", () => _ = ReloadAsync()),
+            ("Unreal project…", null, () => _ = PickProjectAsync()),
+            ("Sign in to Epic…", null, () => _ = SignInAsync()),
+            ("Sync Fab library…", null, () => _ = SyncAsync()),
+            ("Sign in to itch.io…", null, () => _ = ItchSignInAsync()),
+            ("Sync itch.io library…", null, () => _ = SyncAsync(itch: true)),
+            ("Unity project…", null, () => _ = PickUnityAsync()),
+            ("Unity folder…", null, () => _ = UnityFolderAsync()),
+            ("Unity: pack's own folders on/off", null, () =>
+            {
+                _settings.UnityMirrorPack = !_settings.UnityMirrorPack;
+                _settings.Save();
+                _status.Text = _settings.UnityMirrorPack ? $"Unity: assets go into the pack's own folders under {_settings.UnityFolder}" : $"Unity: assets go into {_settings.UnityFolder}/<pack>/<asset>";
+            }),
+            ("Quit", "Ctrl+Q", Close));
+        Button view = Menu("View", "Picture size, the debug log.",
+            ("Small pictures", null, () => SetPicture(96)),
+            ("Medium pictures", null, () => SetPicture(128)),
+            ("Large pictures", null, () => SetPicture(180)),
+            ("Debug log", "Ctrl+Shift+L", () => LogWindow.Open(this)));
+        Button help = Menu("Help", "About Asset Shelf.",
+            ("About Asset Shelf", null, () => _status.Text = "Asset Shelf: every asset of your packs in one grid; send one to Unreal or Blender. MIT licence."));
+
+        var left = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
+        left.Children.Add(brand);
+        left.Children.Add(new Border { Width = 6 });
+        left.Children.Add(file);
+        left.Children.Add(view);
+        left.Children.Add(help);
+        left.Children.Add(new TextBlock { Text = "Asset Shelf", FontSize = Look.Theme.Body, FontWeight = FontWeight.SemiBold, Foreground = Look.Theme.TextPrimary, Margin = new Thickness(16, 0, 8, 0), VerticalAlignment = VerticalAlignment.Center });
+        left.Children.Add(_assetsTab);
+        left.Children.Add(_packsTabTop);
+        left.Children.Add(new Border { Width = 10 });
+        left.Children.Add(_libraryCaption);
+        _assetsTab.IsChecked = true;
+        _assetsTab.Click += (_, _) => SetMode(packs: false);
+        _packsTabTop.Click += (_, _) => SetMode(packs: true);
+
+        _search.Width = 380;
+        _search.HorizontalAlignment = HorizontalAlignment.Center;
+        _search.VerticalAlignment = VerticalAlignment.Center;
+        _search.Background = Look.Theme.SurfacePanel;
+
+        var right = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 0, 8, 0) };
+        right.Children.Add(_toUnity);
+        right.Children.Add(_toBlender);
+        right.Children.Add(_toUnreal);
+
+        var bar = new Grid { Background = Look.Theme.SurfacePage, ColumnDefinitions = new ColumnDefinitions("*,Auto,*") };
+        bar.Children.Add(new Border { Child = left, Padding = new Thickness(Look.Theme.Space2, 0, 0, 0) });
+        Grid.SetColumn(_search, 1);
+        bar.Children.Add(_search);
+        Grid.SetColumn(right, 2);
+        bar.Children.Add(right);
+        return new Border { Child = bar, BorderBrush = Look.Theme.BorderSubtle, BorderThickness = new Thickness(0, 0, 0, 1) };
+    }
+
+    private static Button Menu(string title, string tip, params (string Text, string? Keys, Action Run)[] items)
+    {
+        Button b = Chrome.TextButton(title, tip);
+        var flyout = new MenuFlyout { Placement = PlacementMode.BottomEdgeAlignedLeft };
+        foreach (var (text, keys, run) in items)
+        {
+            var mi = new MenuItem { Header = text, InputGesture = keys is null ? null : KeyGesture.Parse(keys), FontSize = Look.Theme.Label };
+            mi.Click += (_, _) => run();
+            flyout.Items.Add(mi);
+        }
+
+        b.Flyout = flyout;
+        return b;
+    }
+
+    private Control Body()
+    {
+        var leftHead = new Border
+        {
+            Padding = new Thickness(8, 6, 8, 8),
+            BorderBrush = Look.Theme.BorderSubtle,
+            BorderThickness = new Thickness(0, 0, 0, 1),
+            Child = new StackPanel
+            {
+                Spacing = 6,
+                Children =
+                {
+                    new TextBlock { Text = "Filters", FontSize = 15, FontWeight = FontWeight.SemiBold, Foreground = Look.Theme.TextPrimary, Margin = new Thickness(2, 3, 0, 0) },
+                    _tagFilter,
+                },
+            },
+        };
+        var filters = new StackPanel { Children = { leftHead, _activeTags, _keepGroup, _tagsGroup, _licenceGroup, _packsGroup } };
+        var leftPanel = new Border
+        {
+            Width = 270,
+            Background = Look.Theme.SurfacePanel,
+            BorderBrush = Look.Theme.BorderSubtle,
+            BorderThickness = new Thickness(0, 0, 1, 0),
+            Child = new ScrollViewer { Content = filters },
+        };
+
+        var tabsBar = new Border
+        {
+            Padding = new Thickness(10, 6),
+            BorderBrush = Look.Theme.BorderSubtle,
+            BorderThickness = new Thickness(0, 0, 0, 1),
+            Child = _tabs,
+        };
+        var middle = new DockPanel();
+        DockPanel.SetDock(tabsBar, Dock.Top);
+        middle.Children.Add(tabsBar);
+        middle.Children.Add(_grid);
+        _assetsMiddle = middle;
+        _middle.Content = middle;
+
+        _rightScroll.Content = _details;
+        var rightPanel = new Border
+        {
+            Width = 330,
+            Background = Look.Theme.SurfacePanel,
+            BorderBrush = Look.Theme.BorderSubtle,
+            BorderThickness = new Thickness(1, 0, 0, 0),
+            Child = _rightScroll,
+        };
+        _rightPanel = rightPanel;
+        _leftPanel = leftPanel;
+
+        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto") };
+        grid.Children.Add(leftPanel);
+        Grid.SetColumn(_middle, 1);
+        grid.Children.Add(_middle);
+        Grid.SetColumn(rightPanel, 2);
+        grid.Children.Add(rightPanel);
+        return grid;
+    }
+
+    private Control StatusBar()
+    {
+        var dock = new DockPanel { Margin = new Thickness(10, 0, 4, 0) };
+        var right = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 14, VerticalAlignment = VerticalAlignment.Center };
+        right.Children.Add(_counts);
+        right.Children.Add(_projectButton);
+        DockPanel.SetDock(right, Dock.Right);
+        dock.Children.Add(right);
+        var left = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center, Children = { _status, _progress } };
+        dock.Children.Add(left);
+        return new Border { Child = dock, Background = Look.Theme.SurfacePage, BorderBrush = Look.Theme.BorderSubtle, BorderThickness = new Thickness(0, 1, 0, 0) };
+    }
+
+    // ---- filters ----
+
+    private bool _reloading;
+
+    private async Task ReloadAsync()
+    {
+        if (_reloading)
+        {
+            return;
+        }
+
+        _reloading = true;
+        _status.Text = "Reading the library…";
+        var progress = new Progress<(int Done, int Total)>(p => Busy(p.Total == 0 ? null : (double)p.Done / p.Total));
+        try
+        {
+            using (Log.Time("library", "reload (Ctrl+R)"))
+            {
+                _lib = await Task.Run(() => Library.Load(_settings.Packs, _settings.Index, progress));
+            }
+        }
+        finally
+        {
+            _reloading = false;
+            Idle();
+        }
+
+        UseLibrary();
+    }
+
+    private void UseLibrary()
+    {
+        _libraryCaption.Text = $"{_lib.Items.Count:N0} assets · {_lib.Packs.Count} packs ({_lib.Packs.Count(p => p.Indexed)} indexed)";
+        _status.Text = _lib.Packs.Count == 0 ? $"No indexes in {_settings.Index}" : "Ready";
+        _picked = null;
+        _history.Clear();  // places point at the old library's objects
+        _at = -1;
+        ShowDetails(null);
+        FillPacksAndLicences();
+        Refresh();
+    }
+
+    // ---- back and forward ----
+
+    /// <summary>Where the user was: the view, the filters and what was picked.</summary>
+    private sealed record Place(bool Packs, string? Kind, string Search, string[] PackOff, string[] LicenceOff, string[] TagOn, Item? Item, Pack? Pack, string? Collection)
+    {
+        public string Key => $"{Packs}|{Kind}|{Search}|{string.Join(',', PackOff)}|{string.Join(',', LicenceOff)}|{string.Join(',', TagOn)}|{Item?.Package}|{Pack?.Id}|{Collection}";
+    }
+
+    private const int HistoryMax = 100;
+    private readonly List<Place> _history = [];
+    private int _at = -1;
+    private bool _restoring;
+    private long _lastRecord;
+
+    private Place Here() => new(_packsMode, _kind, _search.Box.Text ?? "", [.. _packOff.Order(StringComparer.Ordinal)],
+        [.. _licenceOff.Order(StringComparer.Ordinal)], [.. _tagOn.Order(StringComparer.OrdinalIgnoreCase)], _picked, _packsView.Current, _collection);
+
+    /// <summary>Adds where the user is now to the history. Changes within a moment of each other (a pack filter and then
+    /// the asset picked in it) make one step.</summary>
+    private void Record()
+    {
+        if (_restoring)
+        {
+            return;
+        }
+
+        Place now = Here();
+        if (_at >= 0 && _history[_at].Key == now.Key)
+        {
+            return;
+        }
+
+        long t = Environment.TickCount64;
+        bool merge = _at >= 1 && t - _lastRecord < 400;
+        _lastRecord = t;
+        _history.RemoveRange(_at + 1, _history.Count - _at - 1);
+        if (merge)
+        {
+            _history[_at] = now;
+            return;
+        }
+
+        _history.Add(now);
+        if (_history.Count > HistoryMax)
+        {
+            _history.RemoveAt(0);
+        }
+
+        _at = _history.Count - 1;
+    }
+
+    private void Step(int by)
+    {
+        int to = _at + by;
+        if (to < 0 || to >= _history.Count)
+        {
+            return;
+        }
+
+        _at = to;
+        Place p = _history[to];
+        Log.Write("nav", $"{(by < 0 ? "back" : "forward")} to step {to + 1} of {_history.Count}: {(p.Packs ? "Packs" : "Assets")}{(p.Item is { } it ? ", " + it.Name : p.Pack is { } pk ? ", " + pk.Title : "")}");
+        _restoring = true;
+        Place now = Here();
+        // only the picked asset or pack differs: the grid stays as it is
+        bool sameView = now.Packs == p.Packs && now.Kind == p.Kind && now.Search == p.Search && now.PackOff.SequenceEqual(p.PackOff)
+            && now.LicenceOff.SequenceEqual(p.LicenceOff) && now.TagOn.SequenceEqual(p.TagOn) && now.Collection == p.Collection;
+        try
+        {
+            if (sameView)
+            {
+                _packsView.Select(p.Pack);
+                if (p.Item is not null)
+                {
+                    Pick(p.Item);
+                    ScrollTo(p.Item);
+                }
+                else
+                {
+                    Unpick();
+                }
+
+                return;
+            }
+
+            _kind = p.Kind;
+            _collection = p.Collection;
+            _packOff.Clear();
+            _packOff.UnionWith(p.PackOff);
+            _licenceOff.Clear();
+            _licenceOff.UnionWith(p.LicenceOff);
+            _tagOn.Clear();
+            _tagOn.UnionWith(p.TagOn);
+            if ((_search.Box.Text ?? "") != p.Search)
+            {
+                _search.Box.Text = p.Search;  // only when it differs: setting it starts the search timer, a second refresh
+            }
+
+            _searchDelay.Stop();
+            FillPacksAndLicences();
+            SetMode(p.Packs);
+            _packsView.Select(p.Pack);
+            if (p.Item is not null)
+            {
+                Pick(p.Item);
+                ScrollTo(p.Item);
+            }
+            else
+            {
+                Unpick();
+            }
+        }
+        finally
+        {
+            _restoring = false;
+        }
+    }
+
+    private void ScrollTo(Item item)
+    {
+        // after the layout pass, when the rows exist at the current width
+        Dispatcher.UIThread.Post(() =>
+        {
+            int i = _shown.IndexOf(item);
+            if (i >= 0 && _grid.ItemsSource is List<Item[]> rows)
+            {
+                _grid.ScrollIntoView(rows[Math.Min(rows.Count - 1, i / Math.Max(1, _perRow))]);
+            }
+        }, DispatcherPriority.Background);
+    }
+
+    private void ClearFilters()
+    {
+        _search.Box.Text = "";
+        _tagOn.Clear();
+        _kind = null;
+        Refresh();
+    }
+
+    private IEnumerable<Item> Pool()
+    {
+        string[] words = (_search.Box.Text ?? "").ToLowerInvariant().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return _lib.Items.Where(i => !_packOff.Contains(i.Pack.Id) && !_licenceOff.Contains(LicenceOf(i.Pack))
+            && _tagOn.All(t => i.Tags.Contains(t)) && words.All(w => i.SearchText.Contains(w, StringComparison.Ordinal))
+            && (_collection is null || (_keep.Members(_collection)?.Contains(Collections.Key(i)) ?? false)));
+    }
+
+    private void SetMode(bool packs)
+    {
+        _packsMode = packs;
+        _assetsTab.IsChecked = !packs;
+        _packsTabTop.IsChecked = packs;
+        _leftPanel.IsVisible = !packs;
+        _middle.Content = packs ? _packsView.Middle : _assetsMiddle;
+        _rightScroll.Content = packs ? _packsView.Details : _details;
+        _rightPanel.Width = packs ? 660 : 330;
+        _toUnreal.IsVisible = !packs;
+        _toBlender.IsVisible = !packs;
+        _search.Box.PlaceholderText = packs ? "Search packs, sellers, tags…" : "Search assets, packs, tags…";
+        Refresh();
+    }
+
+    private void Refresh()
+    {
+        using var step = Log.Time("grid", "refresh");
+        if (_packsMode)
+        {
+            _packsView.Show(_lib.Packs, _search.Box.Text ?? "");
+            _counts.Text = $"{_packsView.ShownCount:N0} packs shown";
+            UpdateProjectButton();
+            Record();
+            return;
+        }
+
+        List<Item> pool = Pool().ToList();
+        Dictionary<string, int> perKind = pool.CountBy(i => i.Kind).ToDictionary(k => k.Key, k => k.Value);
+        _shown = pool.Where(i => _kind is null ? Library.DefaultKinds.Contains(i.Kind) : i.Kind == _kind)
+            .OrderBy(i => Array.IndexOf(Library.Kinds, i.Kind)).ThenBy(i => i.Pack.Title, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(i => i.Name, StringComparer.OrdinalIgnoreCase).ToList();
+
+        _tabs.Children.Clear();
+        int allCount = pool.Count(i => Library.DefaultKinds.Contains(i.Kind));
+        _tabs.Children.Add(MakeTab("All", allCount, null, "Meshes, characters, animations, effects, sounds, blueprints and maps. Materials, textures and the rest have their own tabs."));
+        foreach (var (kind, plural) in TabKinds)
+        {
+            _tabs.Children.Add(MakeTab(plural, perKind.GetValueOrDefault(kind), kind, $"Only {plural.ToLowerInvariant()}."));
+        }
+
+        _activeTags.Children.Clear();
+        Pack? only = _lib.Packs.Count > 1 && _packOff.Count == _lib.Packs.Count - 1 ? _lib.Packs.FirstOrDefault(p => !_packOff.Contains(p.Id)) : null;
+        _activeTags.IsVisible = _tagOn.Count > 0 || only is not null || _collection is not null;
+        if (_collection is { } col)
+        {
+            _activeTags.Children.Add(Chip($"{col}", on: true, "Showing only this collection. Click to show everything again.", () => _collection = null));
+        }
+
+        if (only is not null)
+        {
+            _activeTags.Children.Add(Chip($"Pack: {ShortTitle(only.Title)}", on: true, "Showing only this pack. Click to show every pack again.", () =>
+            {
+                _packOff.Clear();
+                FillPacksAndLicences();
+            }));
+        }
+
+        foreach (string t in _tagOn.Order(StringComparer.OrdinalIgnoreCase))
+        {
+            _activeTags.Children.Add(Chip(t, on: true, $"Showing only assets tagged {t}. Click to drop it.", () => _tagOn.Remove(t)));
+        }
+
+        FillTags();
+        FillGrid();
+        FillKeep();
+        GroupActions();
+        step.Then($"refresh: {_shown.Count:N0} shown of {pool.Count:N0} matching, kind {_kind ?? "All"}, {_tagOn.Count} tags, {_packOff.Count} packs off");
+        _counts.Text = $"{_shown.Count:N0} shown";
+        UpdateProjectButton();
+        Record();
+    }
+
+    private Tab MakeTab(string name, int count, string? kind, string tip)
+    {
+        var tab = new Tab($"{name} {count:N0}", tip) { IsChecked = _kind == kind };
+        tab.Click += (_, _) =>
+        {
+            _kind = kind;
+            Refresh();
+        };
+        return tab;
+    }
+
+    private void FillTags()
+    {
+        string want = (_tagFilter.Box.Text ?? "").Trim().ToLowerInvariant();
+        _tagsGroup.Body.Children.Clear();
+        int total = _shown.Count;
+        var tags = _shown.SelectMany(i => i.Tags.Select(t => t.ToLowerInvariant()).Distinct())
+            .Where(t => !_tagOn.Contains(t) && !Library.Kinds.Contains(t, StringComparer.OrdinalIgnoreCase) && (want.Length == 0 || t.Contains(want, StringComparison.Ordinal)))
+            .CountBy(t => t)
+            .Where(t => t.Value < total || total < 2)  // a tag every shown asset has narrows nothing
+            .OrderByDescending(t => t.Value).ThenBy(t => t.Key, StringComparer.Ordinal).Take(want.Length > 0 ? 80 : 40).ToList();
+        var wrap = new WrapPanel();
+        foreach (var (tag, n) in tags)
+        {
+            wrap.Children.Add(Chip($"{tag}  {n}", on: false, $"Show only assets tagged {tag} ({n} of those shown).", () => _tagOn.Add(tag)));
+        }
+
+        _tagsGroup.Body.Children.Add(wrap);
+        _tagsGroup.Count = tags.Count == 0 ? "" : $"{tags.Count}";
+    }
+
+    private void FillPacksAndLicences()
+    {
+        if (_packsGroup.Body.Children.Count == 0)
+        {
+            _packsGroup.Body.Children.Add(_packFilter);
+            _packsGroup.Body.Children.Add(_packRows);
+        }
+
+        _packRows.Children.Clear();
+        string want = (_packFilter.Box.Text ?? "").Trim();
+        var perPack = _lib.Items.CountBy(i => i.Pack.Id).ToDictionary(k => k.Key, k => k.Value);
+        foreach (Pack p in _lib.Packs.Where(p => p.Indexed && (want.Length == 0 || p.Title.Contains(want, StringComparison.OrdinalIgnoreCase) || p.Seller.Contains(want, StringComparison.OrdinalIgnoreCase)))
+                     .OrderBy(p => ShortTitle(p.Title), StringComparer.OrdinalIgnoreCase))
+        {
+            _packRows.Children.Add(new CheckRow(ShortTitle(p.Title), $"{perPack.GetValueOrDefault(p.Id):N0}", !_packOff.Contains(p.Id),
+                $"{p.Title}\n{p.Category}\n{p.Licence}", on => Toggle(_packOff, p.Id, !on)));
+        }
+
+        _packsGroup.Count = $"{_lib.Packs.Count(p => p.Indexed)}";
+        _licenceGroup.Body.Children.Clear();
+        foreach (var (lic, n) in _lib.Packs.Where(p => p.Indexed).CountBy(LicenceOf).OrderByDescending(l => l.Value))
+        {
+            _licenceGroup.Body.Children.Add(new CheckRow(lic, n == 1 ? "1 pack" : $"{n} packs", !_licenceOff.Contains(lic), $"Packs under {lic}.", on => Toggle(_licenceOff, lic, !on)));
+        }
+    }
+
+    /// <summary>Each filter group's "unselect" action, worded for what it would do now.</summary>
+    private void GroupActions()
+    {
+        _tagsGroup.SetAction(_tagOn.Count > 0 ? "Unselect" : null, "Drop the chosen tags.", () =>
+        {
+            _tagOn.Clear();
+            Refresh();
+        });
+        List<string> licences = [.. _lib.Packs.Where(p => p.Indexed).Select(LicenceOf).Distinct()];
+        string want = (_packFilter.Box.Text ?? "").Trim();  // with a filter typed, only the packs it shows
+        List<string> packs = [.. _lib.Packs.Where(p => p.Indexed && (want.Length == 0 || p.Title.Contains(want, StringComparison.OrdinalIgnoreCase)
+            || p.Seller.Contains(want, StringComparison.OrdinalIgnoreCase))).Select(p => p.Id)];
+        Every(_licenceGroup, _licenceOff, licences, "licence");
+        Every(_packsGroup, _packOff, packs, "pack");
+    }
+
+    private void Every(FoldGroup group, HashSet<string> off, List<string> all, string what)
+    {
+        bool anyOn = all.Any(k => !off.Contains(k));
+        group.SetAction(anyOn ? "Unselect all" : "Select all",
+            anyOn ? $"Untick every {what}, then tick the ones you want." : $"Tick every {what} again.", () =>
+            {
+                if (anyOn)
+                {
+                    off.UnionWith(all);
+                }
+                else
+                {
+                    off.ExceptWith(all);
+                }
+
+                FillPacksAndLicences();
+                Refresh();
+            });
+    }
+
+    private void OnlyPack(Pack pack)
+    {
+        _packOff.Clear();
+        _packOff.UnionWith(_lib.Packs.Where(p => p != pack).Select(p => p.Id));
+        FillPacksAndLicences();
+        Refresh();
+    }
+
+    private void Toggle(HashSet<string> off, string key, bool hide)
+    {
+        if (hide)
+        {
+            off.Add(key);
+        }
+        else
+        {
+            off.Remove(key);
+        }
+
+        Refresh();
+    }
+
+    private static string LicenceOf(Pack p) => p.Licence.Length == 0 ? "Unknown" : p.Licence.Split(':')[0];
+
+    // Fab titles repeat their keywords in brackets: "Medieval Tavern ( Medieval Tavern Interior ... )"
+    internal static string ShortTitle(string t) => t.Contains(" (", StringComparison.Ordinal) && t.EndsWith(')') ? t[..t.IndexOf(" (", StringComparison.Ordinal)] : t;
+
+    private Button Chip(string text, bool on, string tip, Action toggle)
+    {
+        var content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
+        content.Children.Add(new TextBlock { Text = text, FontSize = Look.Theme.Caption, VerticalAlignment = VerticalAlignment.Center });
+        if (on)
+        {
+            content.Children.Add(new Icon("x", 11) { VerticalAlignment = VerticalAlignment.Center });
+        }
+
+        var b = new Button
+        {
+            Height = 22,
+            MinHeight = 0,
+            Padding = new Thickness(8, 0),
+            Margin = new Thickness(0, 0, 4, 4),
+            VerticalContentAlignment = VerticalAlignment.Center,
+            Content = content,
+        };
+        b.Classes.Add("ep");
+        b.Classes.Add(on ? "ep-raised" : "ep-outline");
+        Chrome.Tip(b, tip);
+        b.Click += (_, _) =>
+        {
+            toggle();
+            Refresh();
+        };
+        return b;
+    }
+
+    // ---- grid ----
+
+    private double _tileW = 146;
+
+    private double TileW => _tileW;
+
+    private double Side => _tileW - 18;  // the picture inside a tile
+
+    private double TileH => Side + 46;
+
+    // As many tiles of the chosen picture size as fit, then stretched to fill the row.
+    private void Relayout(double width)
+    {
+        double room = width - 30;
+        int n = Math.Max(1, (int)(room / (_picture + 22)));
+        double w = Math.Floor(room / n) - 4;
+        if (n != _perRow || Math.Abs(w - _tileW) > 0.5)
+        {
+            _perRow = n;
+            _tileW = w;
+            FillGrid();
+        }
+    }
+
+    private void SetPicture(double side)
+    {
+        _picture = side;
+        _perRow = 0;
+        Relayout(_grid.Bounds.Width);
+    }
+
+    private void FillGrid()
+    {
+        _tileOf.Clear();
+        int per = Math.Max(1, _perRow);
+        var rows = new List<Item[]>();
+        for (int i = 0; i < _shown.Count; i += per)
+        {
+            rows.Add(_shown.Skip(i).Take(per).ToArray());
+        }
+
+        _grid.ItemsSource = rows;
+    }
+
+    private Control MakeRow(Item[]? row)
+    {
+        var panel = new StackPanel { Orientation = Orientation.Horizontal, Height = TileH + 4 };
+        foreach (Item item in row ?? [])
+        {
+            panel.Children.Add(MakeTile(item));
+        }
+
+        return panel;
+    }
+
+    private Control MakeTile(Item item)
+    {
+        Control inner;
+        if (item.Thumb is null)
+        {
+            inner = new Icon(KindIcon(item.Kind), 28) { Foreground = Look.Theme.TextTertiary, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+        }
+        else
+        {
+            var img = new Image { Width = Side, Height = Side, Stretch = Stretch.Uniform };
+            Thumbs.Bind(img, item.Thumb);
+            inner = img;
+        }
+
+        Control picture = new Border { Width = Side, Height = Side, CornerRadius = new CornerRadius(Look.Theme.Radius2), ClipToBounds = true, Background = Look.Theme.SurfaceSunken, Child = inner };
+        if (!item.Raw && _inProject.Contains(item.Package))
+        {
+            var badge = new Border
+            {
+                Width = 18,
+                Height = 18,
+                Margin = new Thickness(4),
+                CornerRadius = new CornerRadius(9),
+                Background = Look.Theme.Accent,
+                HorizontalAlignment = HorizontalAlignment.Right,
+                VerticalAlignment = VerticalAlignment.Top,
+                Child = new Icon("check", 11) { Foreground = Look.Theme.AccentInk, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center },
+            };
+            Chrome.Tip(badge, $"Already in {Path.GetFileName(_settings.UnrealProject.TrimEnd('/'))}.");
+            picture = new Panel { Width = Side, Height = Side, Children = { picture, badge } };
+        }
+
+        var name = new TextBlock { Text = item.Name, FontSize = 11, Foreground = Look.Theme.TextPrimary, TextTrimming = TextTrimming.CharacterEllipsis, TextAlignment = TextAlignment.Center, MaxWidth = Side };
+        string sub = item.Raw ? $"{item.Kind} · {Path.GetExtension(item.Path).TrimStart('.').ToUpperInvariant()}" : item.Kind;
+        var kind = new TextBlock { Text = sub, FontSize = 10, Foreground = Look.Theme.TextTertiary, TextAlignment = TextAlignment.Center };
+        var border = new Border
+        {
+            Width = TileW,
+            Height = TileH,
+            Margin = new Thickness(2),
+            Padding = new Thickness(7, 7, 7, 4),
+            CornerRadius = new CornerRadius(6),
+            BorderThickness = new Thickness(2),
+            BorderBrush = item == _picked || _selected.Contains(item) ? Look.Theme.Selection : Brushes.Transparent,
+            Background = Look.Theme.SurfacePanel,
+            Child = new StackPanel { Spacing = 3, Children = { picture, name, kind } },
+            Cursor = new Cursor(StandardCursorType.Hand),
+        };
+        Chrome.Tip(border, $"{item.Name}\n{item.Class} · {ShortTitle(item.Pack.Title)}");
+        border.PointerEntered += (_, _) => border.Background = Look.Theme.SurfaceRaised;
+        border.PointerExited += (_, _) => border.Background = Look.Theme.SurfacePanel;
+        border.PointerPressed += (_, e) => Click(item, e.KeyModifiers);
+        _tileOf[item] = border;
+        return border;
+    }
+
+    private static string KindIcon(string kind) => kind switch
+    {
+        "Mesh" => "box",
+        "Character" => "person-standing",
+        "Animation" => "move",
+        "VFX" => "sun",
+        "Sound" => "wind",
+        "Blueprint" => "settings-2",
+        "Map" => "frame",
+        "Material" => "layers",
+        "Texture" => "grid-2x2",
+        _ => "shapes",
+    };
+
+    private void Unpick()
+    {
+        _picked = null;
+        _selected.Clear();
+        Highlight();
+        ShowDetails(null);
+    }
+
+    // ---- collections, favourites, saved filters ----
+
+    /// <summary>Under the picture: the favourite star and "Add to…" for the picked asset (or the whole selection).</summary>
+    private Control KeepBar(Item item)
+    {
+        List<Item> targets = Targets().Count > 1 ? Targets() : [item];
+        string what = targets.Count > 1 ? $"these {targets.Count}" : "this asset";
+        bool fav = targets.All(t => _keep.Favourites.Contains(Collections.Key(t)));
+        Button star = Chrome.IconTextButton("star", fav ? "Favourite" : "Add to favourites", fav ? $"Take {what} out of the favourites." : $"Mark {what} as a favourite.");
+        if (fav)
+        {
+            star.Foreground = Look.Theme.Accent;
+        }
+
+        star.Click += (_, _) =>
+        {
+            foreach (Item t in targets)
+            {
+                if (fav)
+                {
+                    _keep.Favourites.Remove(Collections.Key(t));
+                }
+                else
+                {
+                    _keep.Favourites.Add(Collections.Key(t));
+                }
+            }
+
+            KeepChanged($"{(fav ? "unfavourited" : "favourited")} {targets.Count}");
+        };
+
+        var items = new List<(string Text, string? Keys, Action Run)>();
+        foreach (string name in _keep.Lists.Keys)
+        {
+            string n = name;
+            bool inIt = targets.All(t => _keep.Lists[n].Contains(Collections.Key(t)));
+            items.Add((inIt ? $"Remove from {n}" : $"Add to {n}", null, () =>
+            {
+                foreach (Item t in targets)
+                {
+                    if (inIt)
+                    {
+                        _keep.Lists[n].Remove(Collections.Key(t));
+                    }
+                    else
+                    {
+                        _keep.Lists[n].Add(Collections.Key(t));
+                    }
+                }
+
+                KeepChanged($"{(inIt ? "removed" : "added")} {targets.Count} {(inIt ? "from" : "to")} {n}");
+            }));
+        }
+
+        items.Add(("New collection…", null, async () =>
+        {
+            if (await Prompt.Ask(this, "New collection", $"A name for the new collection ({what} goes in it):") is { } name)
+            {
+                if (!_keep.Lists.TryGetValue(name, out var set))
+                {
+                    _keep.Lists[name] = set = [];
+                }
+
+                set.UnionWith(targets.Select(Collections.Key));
+                KeepChanged($"collection {name}: {targets.Count} added");
+            }
+        }));
+        Button add = Menu("Add to…", $"Put {what} in a collection.", [.. items]);
+        add.Classes.Add("ep-raised");
+        star.HorizontalAlignment = HorizontalAlignment.Stretch;
+        var g = new Grid { ColumnDefinitions = new ColumnDefinitions("*,8,Auto"), Margin = new Thickness(10, 0, 10, 6) };
+        g.Children.Add(star);
+        Grid.SetColumn(add, 2);
+        g.Children.Add(add);
+        return g;
+    }
+
+    private void KeepChanged(string what)
+    {
+        _keep.Save();
+        Log.Write("keep", what);
+        if (_collection is not null)
+        {
+            Refresh();  // the collection being shown may have changed
+        }
+        else
+        {
+            FillKeep();
+        }
+
+        if (_picked is { } p)
+        {
+            ShowDetails(p);
+        }
+    }
+
+    /// <summary>The Collections group: Favourites, each collection and each saved filter, with how many assets are in it.</summary>
+    private void FillKeep()
+    {
+        _keepGroup.Body.Children.Clear();
+        var present = new HashSet<string>(_lib.Items.Select(Collections.Key));
+        void Row(string text, string count, string tip, Action open, Action? delete, bool active)
+        {
+            var b = new Button
+            {
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                HorizontalContentAlignment = HorizontalAlignment.Stretch,
+                Padding = new Thickness(6, 2),
+                MinHeight = 0,
+                Content = new DockPanel
+                {
+                    Children =
+                    {
+                        new TextBlock { Text = count, [DockPanel.DockProperty] = Dock.Right, FontSize = Look.Theme.Caption, Foreground = Look.Theme.TextTertiary, VerticalAlignment = VerticalAlignment.Center },
+                        new TextBlock { Text = text, FontSize = Look.Theme.Label, Foreground = active ? Look.Theme.Accent : Look.Theme.TextPrimary, TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center },
+                    },
+                },
+            };
+            b.Classes.Add("ep");
+            b.Classes.Add(active ? "ep-raised" : "ep-text");
+            Chrome.Tip(b, tip);
+            b.Click += (_, _) => open();
+            if (delete is not null)
+            {
+                var del = new MenuItem { Header = "Delete", FontSize = Look.Theme.Label };
+                del.Click += (_, _) => delete();
+                b.ContextMenu = new ContextMenu { Items = { del } };
+            }
+
+            _keepGroup.Body.Children.Add(b);
+        }
+
+        void Show(string name)
+        {
+            _collection = _collection == name ? null : name;
+            Refresh();
+        }
+
+        Row("★ " + Collections.FavouritesName, $"{_keep.Favourites.Count(present.Contains)}", "Show only your favourites (click again to show everything).",
+            () => Show(Collections.FavouritesName), null, _collection == Collections.FavouritesName);
+        foreach (var (name, set) in _keep.Lists)
+        {
+            string n = name;
+            Row(n, $"{set.Count(present.Contains)}", $"Show only the collection {n}. Right-click to delete it.", () => Show(n), () =>
+            {
+                _keep.Lists.Remove(n);
+                if (_collection == n)
+                {
+                    _collection = null;
+                }
+
+                KeepChanged($"deleted collection {n}");
+                Refresh();
+            }, _collection == n);
+        }
+
+        foreach (var (name, v) in _keep.Saved)
+        {
+            string n = name;
+            Row("⌕ " + n, "", $"Saved filter: {Describe(v)}. Click to apply it; right-click to delete it.", () => Apply(v), () =>
+            {
+                _keep.Saved.Remove(n);
+                KeepChanged($"deleted saved filter {n}");
+            }, false);
+        }
+
+        _keepGroup.Count = $"{1 + _keep.Lists.Count + _keep.Saved.Count}";
+        _keepGroup.SetAction("Save filter…", "Keep the current search, kind, tags, packs and licences as a saved filter.", async () =>
+        {
+            if (await Prompt.Ask(this, "Save this filter", $"A name for this filter ({Describe(Current())}):") is { } name)
+            {
+                _keep.Saved[name] = Current();
+                KeepChanged($"saved filter {name}");
+            }
+        });
+    }
+
+    private Collections.SavedView Current() => new(_search.Box.Text ?? "", _kind, [.. _tagOn.Order(StringComparer.OrdinalIgnoreCase)],
+        [.. _packOff.Order(StringComparer.Ordinal)], [.. _licenceOff.Order(StringComparer.Ordinal)], _collection);
+
+    private static string Describe(Collections.SavedView v)
+    {
+        var parts = new List<string>();
+        if (v.Search.Length > 0)
+        {
+            parts.Add($"\"{v.Search}\"");
+        }
+
+        if (v.Kind is not null)
+        {
+            parts.Add(v.Kind);
+        }
+
+        if (v.TagOn.Length > 0)
+        {
+            parts.Add("tags " + string.Join(", ", v.TagOn));
+        }
+
+        if (v.PackOff.Length > 0)
+        {
+            parts.Add($"{v.PackOff.Length} packs off");
+        }
+
+        if (v.Collection is not null)
+        {
+            parts.Add("in " + v.Collection);
+        }
+
+        return parts.Count == 0 ? "everything" : string.Join("; ", parts);
+    }
+
+    private void Apply(Collections.SavedView v)
+    {
+        _kind = v.Kind;
+        _collection = v.Collection;
+        _tagOn.Clear();
+        _tagOn.UnionWith(v.TagOn);
+        _packOff.Clear();
+        _packOff.UnionWith(v.PackOff.Where(id => _lib.Packs.Any(p => p.Id == id)));
+        _licenceOff.Clear();
+        _licenceOff.UnionWith(v.LicenceOff);
+        if ((_search.Box.Text ?? "") != v.Search)
+        {
+            _search.Box.Text = v.Search;
+        }
+
+        _searchDelay.Stop();
+        FillPacksAndLicences();
+        Refresh();
+    }
+
+    /// <summary>A tile clicked: alone it picks; with Ctrl it is added to or taken out of the selection; with Shift the
+    /// tiles from the last click to this one are selected.</summary>
+    private void Click(Item item, KeyModifiers mods)
+    {
+        if (mods.HasFlag(KeyModifiers.Shift) && _anchor is not null)
+        {
+            int a = _shown.IndexOf(_anchor), b = _shown.IndexOf(item);
+            if (a >= 0 && b >= 0)
+            {
+                if (!mods.HasFlag(KeyModifiers.Control))
+                {
+                    _selected.Clear();
+                }
+
+                _selected.UnionWith(_shown.GetRange(Math.Min(a, b), Math.Abs(a - b) + 1));
+            }
+        }
+        else if (mods.HasFlag(KeyModifiers.Control))
+        {
+            if (_selected.Count == 0 && _picked is not null)
+            {
+                _selected.Add(_picked);
+            }
+
+            if (!_selected.Remove(item))
+            {
+                _selected.Add(item);
+            }
+
+            _anchor = item;
+        }
+        else
+        {
+            _selected.Clear();
+            _anchor = item;
+        }
+
+        Pick(item, keepSelection: true);
+    }
+
+    private void Pick(Item item, bool keepSelection = false)
+    {
+        if (!keepSelection)
+        {
+            _selected.Clear();
+            _anchor = item;
+        }
+
+        _picked = item;
+        Highlight();
+        ShowDetails(item);
+        Record();
+    }
+
+    /// <summary>The assets a send acts on: the selection, or the picked one.</summary>
+    private List<Item> Targets() => _selected.Count > 1 ? [.. _shown.Where(_selected.Contains)] : _picked is { } p ? [p] : [];
+
+    private void Highlight()
+    {
+        foreach (var (it, b) in _tileOf)
+        {
+            b.BorderBrush = it == _picked || _selected.Contains(it) ? Look.Theme.Selection : Brushes.Transparent;
+        }
+
+        int n = Targets().Count;
+        _toUnreal.Content = Chrome.IconAndText("download", n > 1 ? $"Send {n} to Unreal" : "Send to Unreal");
+        _toBlender.Content = Chrome.IconAndText("send", n > 1 ? $"Send {n} to Blender" : "Send to Blender");
+    }
+
+    // ---- details ----
+
+    private void ShowDetails(Item? item)
+    {
+        using var step = Log.Time("details", item is null ? "cleared" : $"{item.Name} ({item.Class}, {item.Pack.Id})");
+        _details.Children.Clear();
+        _extras = [];
+        _toUnreal.IsEnabled = item is { Raw: false };
+        _toBlender.IsEnabled = item is not null && (item.Raw || item.Kind is "Mesh" or "Character" or "Animation");
+        _toUnity.IsEnabled = item is not null && (item.Raw || item.Kind is "Mesh" or "Character");
+        if (item is null)
+        {
+            _details.Children.Add(new TextBlock
+            {
+                Text = "Pick an asset to see what it is and what comes with it, and to send it to Unreal or Blender.",
+                Margin = new Thickness(14, 16),
+                FontSize = Look.Theme.Label,
+                Foreground = Look.Theme.TextTertiary,
+                TextWrapping = TextWrapping.Wrap,
+            });
+            return;
+        }
+
+        _details.Children.Add(new Border
+        {
+            Padding = new Thickness(10, 8),
+            BorderBrush = Look.Theme.BorderSubtle,
+            BorderThickness = new Thickness(0, 0, 0, 1),
+            Child = new StackPanel
+            {
+                Spacing = 2,
+                Children =
+                {
+                    new SelectableTextBlock { Text = item.Name, FontSize = 15, FontWeight = FontWeight.SemiBold, Foreground = Look.Theme.TextPrimary, TextWrapping = TextWrapping.Wrap },
+                    new TextBlock { Text = $"{item.Kind} · {item.Class}", FontSize = Look.Theme.Caption, Foreground = Look.Theme.TextTertiary },
+                },
+            },
+        });
+
+        Control big;
+        if (item.Thumb is not null && File.Exists(item.Thumb))
+        {
+            big = new Image { Stretch = Stretch.Uniform, Source = new Avalonia.Media.Imaging.Bitmap(item.Thumb) };
+        }
+        else
+        {
+            big = new Icon(KindIcon(item.Kind), 48) { Foreground = Look.Theme.TextTertiary, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+        }
+
+        var pictureBox = new Border { Margin = new Thickness(10, 10, 10, 6), Height = 300, CornerRadius = new CornerRadius(Look.Theme.Radius3), ClipToBounds = true, Background = Look.Theme.SurfaceSunken, Child = big };
+        _details.Children.Add(pictureBox);
+        if (item.Raw || item.Kind is "Mesh" or "Character")
+        {
+            Button spin = Chrome.IconTextButton("rotate-ccw", "Spin in 3D", "Turn the model round: rendered once by Blender (an Unreal asset is exported first), then drag to turn it.");
+            spin.HorizontalAlignment = HorizontalAlignment.Stretch;
+            spin.Margin = new Thickness(10, 0, 10, 6);
+            spin.Click += async (_, _) => await SpinAsync(item, pictureBox, spin);
+            _details.Children.Add(spin);
+        }
+
+        _details.Children.Add(KeepBar(item));
+        Button open = Chrome.IconTextButton("box", "Open in Blender", "Start a new Blender window with only this asset in it (an Unreal asset is exported to FBX first, about 20 seconds).");
+        open.HorizontalAlignment = HorizontalAlignment.Stretch;
+        open.Margin = new Thickness(10, 0, 10, 10);
+        open.IsEnabled = item.Raw || item.Kind is "Mesh" or "Character" or "Animation";
+        open.Click += async (_, _) => await OpenInBlenderAsync(item, open);
+        _details.Children.Add(open);
+
+        var notes = new FoldGroup("Notes", open: _keep.Notes.ContainsKey(Collections.Key(item)));
+        var note = new TextBox { Text = _keep.Notes.GetValueOrDefault(Collections.Key(item)) ?? "", AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinHeight = 60, FontSize = Look.Theme.Label, Watermark = "Your note about this asset" };
+        note.LostFocus += (_, _) =>
+        {
+            string k = Collections.Key(item), t = (note.Text ?? "").Trim();
+            if (t == (_keep.Notes.GetValueOrDefault(k) ?? ""))
+            {
+                return;
+            }
+
+            if (t.Length == 0)
+            {
+                _keep.Notes.Remove(k);
+            }
+            else
+            {
+                _keep.Notes[k] = t;
+            }
+
+            _keep.Save();
+            Log.Write("keep", $"note on {item.Name}: {t.Length} characters");
+        };
+        notes.Body.Children.Add(note);
+
+        var about = new FoldGroup("About");
+        Pack pack = item.Pack;
+        var packLink = new Button
+        {
+            Content = new TextBlock { Text = ShortTitle(pack.Title), FontSize = Look.Theme.Label, Foreground = Look.Theme.AccentText, TextWrapping = TextWrapping.Wrap },
+            Padding = new Thickness(4, 2),
+            Margin = new Thickness(-4, 0, 0, 0),
+            MinHeight = 0,
+            HorizontalAlignment = HorizontalAlignment.Left,
+            Cursor = new Cursor(StandardCursorType.Hand),
+        };
+        packLink.Classes.Add("ep");
+        packLink.Classes.Add("ep-text");
+        Chrome.Tip(packLink, $"Show only {ShortTitle(pack.Title)}'s assets.");
+        packLink.Click += (_, _) => OnlyPack(pack);
+        about.Body.Children.Add(InfoRow("Pack", packLink));
+        if (item.Pack.Licence.Length > 0)
+        {
+            about.Body.Children.Add(InfoRow("Licence", item.Pack.Licence));
+        }
+
+        if (item.Twins.Count > 0)
+        {
+            var twinLinks = new StackPanel { Spacing = 0 };
+            foreach (Item t in item.Twins.DistinctBy(t => t.Pack).Take(8))
+            {
+                var link = new Button
+                {
+                    Content = new TextBlock { Text = ShortTitle(t.Pack.Title), FontSize = Look.Theme.Label, Foreground = Look.Theme.AccentText, TextWrapping = TextWrapping.Wrap },
+                    Padding = new Thickness(4, 1),
+                    Margin = new Thickness(-4, 0, 0, 0),
+                    MinHeight = 0,
+                    HorizontalAlignment = HorizontalAlignment.Left,
+                    Cursor = new Cursor(StandardCursorType.Hand),
+                };
+                link.Classes.Add("ep");
+                link.Classes.Add("ep-text");
+                Chrome.Tip(link, $"Show this copy: {t.Pack.Title}\n{t.Pack.Licence}");
+                link.Click += (_, _) =>
+                {
+                    OnlyPack(t.Pack);
+                    Pick(t);
+                    ScrollTo(t);
+                };
+                twinLinks.Children.Add(link);
+            }
+
+            about.Body.Children.Add(InfoRow("Also in", twinLinks));
+        }
+
+        if (!item.Raw && EngineCheck.Parse(item.Pack.Engine) is { } made)
+        {
+            about.Body.Children.Add(InfoRow("Unreal", $"saved with {made.Major}.{made.Minor}"));
+        }
+
+        foreach (var (text, blocking) in Safety.Lines(item.Pack))
+        {
+            about.Body.Children.Add(new TextBlock { Text = (blocking ? "⚠ " : "") + text, FontSize = Look.Theme.Label, Foreground = blocking ? Look.Theme.Accent : Look.Theme.Warning, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(2, 1) });
+        }
+
+        if (Safety.Of(item.Pack) is null)
+        {
+            about.Body.Children.Add(Caption("Not checked for code yet (no safety scan for this pack)."));
+        }
+
+        if (!item.Raw)
+        {
+            foreach (var (text, blocking) in EngineCheck.Check(item.Pack, _settings.UnrealProject))
+            {
+                // blockers in colour; notes about the pack as a whole stay quiet (they rarely matter for one asset)
+                about.Body.Children.Add(new TextBlock { Text = (blocking ? "⚠ " : "") + text, FontSize = Look.Theme.Label, Foreground = blocking ? Look.Theme.Accent : Look.Theme.TextTertiary, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(2, 4) });
+            }
+        }
+
+        if (!item.Raw && _settings.UnrealProject.Length > 0)
+        {
+            List<Item> need = [item, .. Library.Needs(item)];
+            int have = need.Count(i => _inProject.Contains(i.Package));
+            string proj = Path.GetFileName(_settings.UnrealProject.TrimEnd('/'));
+            about.Body.Children.Add(InfoRow("In project", have == need.Count ? $"Yes, with all it needs ({proj})"
+                : have == 0 ? $"No ({proj})"
+                : $"Partly: {have} of {need.Count} packages ({proj})"));
+        }
+
+        foreach (var (key, label) in new[] { ("Triangles", "Triangles"), ("Vertices", "Vertices"), ("ApproxSize", "Size (cm)"), ("Meshes", "Meshes"), ("Animations", "Animations"), ("SequenceLength", "Length (s)"), ("Duration", "Length (s)") })
+        {
+            if (item.Info.TryGetValue(key, out string? v) && v.Length > 0)
+            {
+                about.Body.Children.Add(InfoRow(label, Pretty(key, v)));
+            }
+        }
+
+        about.Body.Children.Add(new SelectableTextBlock { Text = item.Path, FontSize = 10.5, Foreground = Look.Theme.TextTertiary, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(2, 6, 0, 0) });
+        // pack.json is data from disk: only ever open a web address from it, never a file or another scheme
+        if (Uri.TryCreate(item.Pack.Url, UriKind.Absolute, out Uri? url) && (url.Scheme == Uri.UriSchemeHttps || url.Scheme == Uri.UriSchemeHttp))
+        {
+            Button page = Chrome.TextButton("Open the pack's page", url.AbsoluteUri);
+            page.HorizontalAlignment = HorizontalAlignment.Left;
+            page.Margin = new Thickness(-4, 4, 0, 0);
+            page.Click += async (_, _) => await Launcher.LaunchUriAsync(url);
+            about.Body.Children.Add(page);
+        }
+
+        _details.Children.Add(about);
+        _details.Children.Add(notes);
+        if (item.Raw)
+        {
+            return;
+        }
+
+        List<Item> needs = Library.Needs(item);
+        var comes = new FoldGroup("Comes with it") { Count = needs.Count == 0 ? "" : $"{needs.Count}" };
+        if (needs.Count == 0)
+        {
+            comes.Body.Children.Add(Caption("Needs nothing else from its pack."));
+        }
+        else
+        {
+            // "Other" is too vague here: name those by their class (Skeleton, PhysicsAsset...)
+            foreach (var (kind, n) in needs.CountBy(x => x.Kind == "Other" ? x.Class : x.Kind).OrderByDescending(k => k.Value))
+            {
+                comes.Body.Children.Add(InfoRow(Plural(kind, n), $"{n}"));
+            }
+
+            var list = new SelectableTextBlock { Text = string.Join('\n', needs.Select(n => n.Name)), FontSize = 10.5, Foreground = Look.Theme.TextSecondary, IsVisible = false, Margin = new Thickness(2, 2, 0, 0) };
+            Button every = Chrome.TextButton("Show every asset", "List every asset that comes with it.");
+            every.HorizontalAlignment = HorizontalAlignment.Left;
+            every.Margin = new Thickness(-4, 4, 0, 0);
+            every.Click += (_, _) =>
+            {
+                list.IsVisible = !list.IsVisible;
+                ((TextBlock)every.Content!).Text = list.IsVisible ? "Hide the list" : "Show every asset";
+            };
+            comes.Body.Children.Add(every);
+            comes.Body.Children.Add(list);
+        }
+
+        _details.Children.Add(comes);
+        Dictionary<string, List<Item>> works = Library.WorksWith(item);
+        if (works.Count == 0)
+        {
+            return;
+        }
+
+        var also = new FoldGroup("Also bring");
+        foreach (var (group, list) in works)
+        {
+            var cb = new CheckBox
+            {
+                Content = new TextBlock { Text = $"{group} ({list.Count})", FontSize = Look.Theme.Label, Foreground = Look.Theme.TextPrimary },
+                IsChecked = group.StartsWith("Animations", StringComparison.Ordinal),
+                MinHeight = 0,
+            };
+            Chrome.Tip(cb, string.Join('\n', list.Take(30).Select(i => i.Name)) + (list.Count > 30 ? "\n…" : ""));
+            _extras.Add((cb, list));
+            also.Body.Children.Add(cb);
+        }
+
+        _details.Children.Add(also);
+    }
+
+    private static string Plural(string kind, int n) => kind switch
+    {
+        "Mesh" => n == 1 ? "Mesh" : "Meshes",
+        "VFX" => n == 1 ? "Effect" : "Effects",
+        "Other" => "Other",
+        "PhysicsAsset" => n == 1 ? "Physics asset" : "Physics assets",
+        "MaterialFunction" => n == 1 ? "Material function" : "Material functions",
+        _ => n == 1 ? kind : kind + "s",
+    };
+
+    private static string Pretty(string key, string v) => key switch
+    {
+        "Triangles" or "Vertices" when long.TryParse(v, out long n) => n.ToString("N0", System.Globalization.CultureInfo.InvariantCulture),
+        "ApproxSize" => v.Replace("x", " × ", StringComparison.Ordinal),
+        _ => v,
+    };
+
+    internal static Grid InfoRow(string label, string value) =>
+        InfoRow(label, new SelectableTextBlock { Text = value, FontSize = Look.Theme.Label, Foreground = Look.Theme.TextPrimary, TextWrapping = TextWrapping.Wrap });
+
+    internal static Grid InfoRow(string label, Control v)
+    {
+        var g = new Grid { ColumnDefinitions = new ColumnDefinitions("100,*"), MinHeight = Look.Theme.RowHeight - 4 };
+        g.Children.Add(new TextBlock { Text = label, FontSize = Look.Theme.Label, Foreground = Look.Theme.TextSecondary, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(2, 0, 0, 0) });
+        v.VerticalAlignment = VerticalAlignment.Center;
+        Grid.SetColumn(v, 1);
+        g.Children.Add(v);
+        return g;
+    }
+
+    private static TextBlock Caption(string s) => new() { Text = s, FontSize = Look.Theme.Caption, Foreground = Look.Theme.TextTertiary, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(2) };
+
+    // ---- sending ----
+
+    private async Task SendToUnrealAsync()
+    {
+        List<Item> targets = [.. Targets().Where(t => !t.Raw)];
+        if (targets.Count == 0 || _picked is not { } item)
+        {
+            return;
+        }
+
+        if (targets.Count > 1)
+        {
+            item = targets[0];
+        }
+
+        string label = targets.Count > 1 ? $"{targets.Count} assets" : item.Name;
+
+        if (_settings.UnrealProject.Length == 0 && !await PickProjectAsync())
+        {
+            return;
+        }
+
+        var all = new List<Item>();
+        foreach (Item t in targets)
+        {
+            all.Add(t);
+            all.AddRange(Library.Needs(t));
+        }
+
+        foreach (var (_, list) in _extras.Where(e => e.Box.IsChecked == true))
+        {
+            foreach (Item x in list)
+            {
+                all.Add(x);
+                all.AddRange(Library.Needs(x));
+            }
+        }
+
+        _toUnreal.IsEnabled = false;
+        string project = _settings.UnrealProject;
+        try
+        {
+            Sender.UnrealPlan plan;
+            using (Log.Time("unreal", $"{label}: plan"))
+            {
+                plan = await Task.Run(() => Sender.PlanUnreal(all, project));
+            }
+
+            var warnings = targets.Select(t => t.Pack).Distinct().SelectMany(p => EngineCheck.Check(p, project).Concat(Safety.Lines(p))).Distinct().ToList();
+            if (!await SendPreview.Ask(this, label, project, plan, warnings))
+            {
+                _status.Text = $"{label}: not sent";
+                return;
+            }
+
+            _status.Text = $"{label}: copying {plan.Copy.Count} files…";
+            Busy(0);
+            var progress = new Progress<double>(f => Busy(f));
+            using var step = Log.Time("unreal", $"{label}: send to {project}");
+            int copied = await Task.Run(() => Sender.ToUnreal(plan, progress));
+            step.Then($"{label}: {copied} files copied, {plan.Already.Count} packages already there, {plan.Missing.Count} missing");
+            _status.Text = $"{label}: {copied} files copied into {Path.GetFileName(project.TrimEnd('/'))}/Content, {plan.Already.Count} packages already there"
+                + (plan.Missing.Count > 0 ? $", {plan.Missing.Count} missing ({plan.Missing[0]})" : "");
+            _ = ScanProjectAsync();
+        }
+        catch (IOException e)
+        {
+            _status.Text = $"{label}: copy failed: {e.Message}";
+        }
+        finally
+        {
+            Idle();
+            _toUnreal.IsEnabled = _picked is { Raw: false };
+        }
+    }
+
+    private (string File, string TexDir) RawFile(Item item)
+    {
+        string file = Path.Combine(item.Pack.FilesDir, "raw", item.Path);
+        // textures sit anywhere in the unpacked archive (raw/<format>/<archive>/...): hand Blender its top folder
+        string[] parts = item.Path.Split('/');
+        return (file, Path.Combine(item.Pack.FilesDir, "raw", Path.Combine(parts[..Math.Min(2, parts.Length - 1)])));
+    }
+
+    private async Task SpinAsync(Item item, Border box, Button button)
+    {
+        string blenderDir = Path.Combine(Path.GetDirectoryName(_settings.Tools.TrimEnd('/'))!, "blender");
+        button.IsEnabled = false;
+        _status.Text = $"{item.Name}: rendering a turntable{(item.Raw ? "" : " (exporting through Unreal first)")}…";
+        Busy(null);
+        try
+        {
+            List<string> frames;
+            if (item.Raw)
+            {
+                var (file, tex) = RawFile(item);
+                frames = await Turntable.FramesAsync(item, [file], tex, unreal: false, blenderDir);
+            }
+            else
+            {
+                var (dir, fbx) = await Sender.ExportAsync(item, _settings.Tools);
+                frames = await Turntable.FramesAsync(item, fbx, dir, unreal: true, blenderDir);
+            }
+
+            if (_picked == item)
+            {
+                box.Child = new TurntableView(frames);
+            }
+
+            _status.Text = $"{item.Name}: drag the picture to turn it";
+            button.IsVisible = false;
+        }
+        catch (InvalidOperationException e)
+        {
+            _status.Text = $"{item.Name}: {e.Message}";
+            button.IsEnabled = true;
+        }
+        finally
+        {
+            Idle();
+        }
+    }
+
+    private async Task OpenInBlenderAsync(Item item, Button button)
+    {
+        string blenderDir = Path.Combine(Path.GetDirectoryName(_settings.Tools.TrimEnd('/'))!, "blender");
+        button.IsEnabled = false;
+        try
+        {
+            if (item.Raw)
+            {
+                var (file, tex) = RawFile(item);
+                Sender.OpenInBlender(item.Name, [file], tex, blenderDir);
+            }
+            else
+            {
+                _status.Text = $"{item.Name}: exporting through Unreal (about 20 seconds)…";
+                Busy(null);
+                var (dir, fbx) = await Sender.ExportAsync(item, _settings.Tools);
+                Sender.OpenInBlender(item.Name, fbx, dir, blenderDir, unreal: true);
+            }
+
+            _status.Text = $"{item.Name}: opening in a new Blender window…";
+        }
+        catch (InvalidOperationException e)
+        {
+            _status.Text = $"{item.Name}: {e.Message}";
+        }
+        finally
+        {
+            Idle();
+            button.IsEnabled = true;
+        }
+    }
+
+    private async Task SendToBlenderAsync()
+    {
+        List<Item> targets = Targets();
+        if (targets.Count == 0)
+        {
+            return;
+        }
+
+        _toBlender.IsEnabled = false;
+        Busy(targets.Count > 1 ? 0 : null);
+        int sent = 0;
+        try
+        {
+            foreach (Item item in targets)
+            {
+                if (item.Raw)
+                {
+                    var (file, texDir) = RawFile(item);
+                    Sender.ToBlender(item.Name, [file], texDir);
+                }
+                else
+                {
+                    _status.Text = $"{item.Name}: exporting through Unreal{(targets.Count > 1 ? $" ({sent + 1} of {targets.Count})" : "")}…";
+                    await Sender.UnrealToBlenderAsync(item, _settings.Tools);
+                }
+
+                sent++;
+                if (targets.Count > 1)
+                {
+                    Busy((double)sent / targets.Count);
+                }
+            }
+
+            _status.Text = targets.Count > 1 ? $"{sent} assets sent to Blender" : $"{targets[0].Name}: sent to Blender";
+        }
+        catch (InvalidOperationException e)
+        {
+            _status.Text = $"{sent} sent, then: {e.Message}";
+        }
+        finally
+        {
+            Idle();
+            _toBlender.IsEnabled = true;
+        }
+    }
+
+    // ---- Fab library sync (tools/fab_sync.py) ----
+
+    private bool _syncing;
+
+    private async Task SignInAsync()
+    {
+        string url = "";
+        await FabSync.RunAsync(_settings, "fab_sync.py", ["login-url"], l => url = l.StartsWith("https://", StringComparison.Ordinal) ? l : url);
+        if (url.Length == 0)
+        {
+            _status.Text = "Could not start the Epic sign-in (see the debug log)";
+            return;
+        }
+
+        await Launcher.LaunchUriAsync(new Uri(url));
+        if (await Prompt.Ask(this, "Sign in to Epic", "Sign in on the page that just opened in your browser. It ends on a short text with \"authorizationCode\": paste that code (or the whole text) here:") is not { } code)
+        {
+            return;
+        }
+
+        string result = "";
+        // the code goes on stdin: a command line can be read by other processes while it runs
+        int exit = await FabSync.RunAsync(_settings, "fab_sync.py", ["login", "-"], l => result = l, stdin: code);
+        _status.Text = exit == 0 ? $"Epic: {result}" : $"Epic sign-in failed: {result}";
+    }
+
+    private async Task ItchSignInAsync()
+    {
+        await Launcher.LaunchUriAsync(new Uri("https://itch.io/user/settings/api-keys"));
+        if (await Prompt.Ask(this, "Sign in to itch.io", "On the itch.io page that just opened, generate an API key (or copy an existing one) and paste it here:") is not { } k)
+        {
+            return;
+        }
+
+        string result = "";
+        int exit = await FabSync.RunAsync(_settings, "itch_sync.py", ["login", "-"], l => result = l, stdin: k);
+        _status.Text = exit == 0 ? $"itch.io: {result}" : $"itch.io sign-in failed: {result}";
+    }
+
+    private async Task SyncAsync(bool itch = false)
+    {
+        if (_syncing)
+        {
+            return;
+        }
+
+        _syncing = true;
+        string work = Path.Combine(Path.GetDirectoryName(Sender.Outbox())!, itch ? "sync-itch" : "sync");
+        string script = itch ? "itch_sync.py" : "fab_sync.py", source = itch ? "itch.io" : "Fab";
+        Directory.CreateDirectory(work);
+        string planFile = Path.Combine(work, "plan.json"), changed = Path.Combine(work, "changed.txt");
+        void Status(string l) => Dispatcher.UIThread.Post(() => _status.Text = $"{source} sync: " + (l.Length > 9 && l[2] == ':' ? l[9..] : l));
+        try
+        {
+            Busy(null);
+            using (Log.Time("fab", "compare the library"))
+            {
+                string[] args = itch ? ["sync", "--packs", _settings.Packs, "--index", _settings.Index, "--plan", planFile] : ["sync", "--packs", _settings.Packs, "--plan", planFile];
+                File.Delete(planFile);
+                if (await FabSync.RunAsync(_settings, script, args, Status) != 0 || !File.Exists(planFile))
+                {
+                    _status.Text = $"{source} sync failed: sign in first (File > Sign in to {(itch ? "itch.io" : "Epic")}…), or see the debug log";
+                    return;
+                }
+            }
+
+            Idle();
+            if (!await SyncPreview.Ask(this, planFile, source))
+            {
+                _status.Text = $"{source} sync: nothing downloaded";
+                return;
+            }
+
+            Busy(null);
+            File.Delete(changed);
+            using (Log.Time("fab", "download"))
+            {
+                await FabSync.RunAsync(_settings, script, ["sync", "--packs", _settings.Packs, "--index", _settings.Index, "--download", "--changed", changed], Status);
+            }
+
+            string[] slugs = File.Exists(changed) ? File.ReadAllLines(changed).Where(l => l.Length > 0).ToArray() : [];
+            if (slugs.Length > 0)
+            {
+                using (Log.Time("fab", $"index {slugs.Length} packs"))
+                {
+                    await FabSync.RunAsync(_settings, "index_library.py", ["--kind", itch ? "raw" : "unreal", "--redo", changed, "--order", changed, "--limit", $"{slugs.Length}",
+                        "--packs", _settings.Packs, "--index", _settings.Index], Status, "6G");
+                }
+
+                await ReloadAsync();
+            }
+
+            _status.Text = $"{source} sync: {slugs.Length} packs downloaded and indexed";
+        }
+        finally
+        {
+            _syncing = false;
+            Idle();
+        }
+    }
+
+    private async Task<bool> PickUnityAsync()
+    {
+        IReadOnlyList<IStorageFolder> f = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions { Title = "The Unity project's folder (holds Assets/)" });
+        if (f.Count == 0 || f[0].TryGetLocalPath() is not { } path)
+        {
+            return false;
+        }
+
+        if (!Directory.Exists(Path.Combine(path, "Assets")))
+        {
+            _status.Text = $"{path} has no Assets folder: not a Unity project";
+            return false;
+        }
+
+        _settings.UnityProject = path;
+        _settings.Save();
+        _status.Text = $"Unity project: {Path.GetFileName(path.TrimEnd('/'))} ({UnitySender.Pipeline(path).ToUpperInvariant()})";
+        return true;
+    }
+
+    private async Task UnityFolderAsync()
+    {
+        if (await Prompt.Ask(this, "Unity folder", "Where in the Unity project assets go (inside Assets/):", _settings.UnityFolder) is { } folder)
+        {
+            folder = folder.Replace('\\', '/').Trim('/');
+            if (!folder.StartsWith("Assets", StringComparison.Ordinal) || folder.Split('/').Contains(".."))
+            {
+                _status.Text = "The Unity folder has to be inside Assets/";
+                return;
+            }
+
+            _settings.UnityFolder = folder;
+            _settings.Save();
+            _status.Text = $"Unity folder: {folder}";
+        }
+    }
+
+    private async Task SendToUnityAsync()
+    {
+        List<Item> targets = [.. Targets().Where(t => t.Raw || t.Kind is "Mesh" or "Character")];
+        if (targets.Count == 0)
+        {
+            _status.Text = "Send to Unity takes meshes and characters";
+            return;
+        }
+
+        if (_settings.UnityProject.Length == 0 && !await PickUnityAsync())
+        {
+            return;
+        }
+
+        string blenderDir = Path.Combine(Path.GetDirectoryName(_settings.Tools.TrimEnd('/'))!, "blender");
+        _toUnity.IsEnabled = false;
+        Busy(targets.Count > 1 ? 0 : null);
+        var lines = new List<string>();
+        try
+        {
+            foreach (Item item in targets)
+            {
+                _status.Text = $"{item.Name}: into Unity{(targets.Count > 1 ? $" ({lines.Count + 1} of {targets.Count})" : "")}…";
+                if (item.Raw)
+                {
+                    var (file, tex) = RawFile(item);
+                    lines.Add(await UnitySender.SendAsync(item, [file], tex, unreal: false, _settings, blenderDir));
+                }
+                else
+                {
+                    var (dir, fbx) = await Sender.ExportAsync(item, _settings.Tools);
+                    lines.Add(await UnitySender.SendAsync(item, fbx, dir, unreal: true, _settings, blenderDir));
+                }
+
+                if (targets.Count > 1)
+                {
+                    Busy((double)lines.Count / targets.Count);
+                }
+            }
+
+            _status.Text = targets.Count == 1 ? lines[0] : $"{lines.Count} assets sent to Unity ({Path.GetFileName(_settings.UnityProject.TrimEnd('/'))})";
+        }
+        catch (Exception e) when (e is InvalidOperationException or IOException)
+        {
+            _status.Text = $"Unity: {e.Message}";
+        }
+        finally
+        {
+            Idle();
+            _toUnity.IsEnabled = true;
+        }
+    }
+
+    private void UpdateProjectButton()
+    {
+        var text = (TextBlock)_projectButton.Content!;
+        text.FontSize = Look.Theme.Caption;
+        text.Text = _settings.UnrealProject.Length == 0 ? "No Unreal project: pick one" : $"Unreal: {Path.GetFileName(_settings.UnrealProject.TrimEnd('/'))}";
+        Chrome.Tip(_projectButton, (_settings.UnrealProject.Length == 0 ? "" : _settings.UnrealProject + "\n") + "Click to pick the Unreal project assets are sent to.");
+    }
+
+    private async Task<bool> PickProjectAsync()
+    {
+        IReadOnlyList<IStorageFolder> f = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions { Title = "The Unreal project's folder (holds the .uproject)" });
+        if (f.Count == 0 || f[0].TryGetLocalPath() is not { } path)
+        {
+            return false;
+        }
+
+        _settings.UnrealProject = path;
+        _settings.Save();
+        UpdateProjectButton();
+        _ = ScanProjectAsync();
+        return true;
+    }
+}
