@@ -59,24 +59,39 @@ def import_file(path):
         prefs = bpy.context.preferences.filepaths
         was = prefs.use_scripts_auto_execute
         prefs.use_scripts_auto_execute = False
+        before = all_ids()
         try:
             with bpy.data.libraries.load(path, link=False) as (src, dst):
                 dst.objects = src.objects
+            # Python-expression drivers would still run later if auto-run is on in this Blender: drop every one that
+            # came in, on any new data block, its node tree and its shape keys
+            for idb in all_ids() - before:
+                for holder in filter(None, (idb, getattr(idb, 'node_tree', None), getattr(idb, 'shape_keys', None))):
+                    ad = getattr(holder, 'animation_data', None)
+                    for fc in list(ad.drivers) if ad else []:
+                        if fc.driver.type == 'SCRIPTED':
+                            ad.drivers.remove(fc)
         finally:
             prefs.use_scripts_auto_execute = was
-        # Python-expression drivers would still run later if auto-run is on in this Blender: drop them from what came in
-        for o in dst.objects:
-            for idb in filter(None, [o, getattr(o, 'data', None), *[s.material for s in getattr(o, 'material_slots', []) if s.material]]):
-                ad = getattr(idb, 'animation_data', None)
-                for fc in list(ad.drivers) if ad else []:
-                    if fc.driver.type == 'SCRIPTED':
-                        ad.drivers.remove(fc)
         for o in dst.objects:
             if o is not None:
                 bpy.context.scene.collection.objects.link(o)
                 o.select_set(True)
     else:
         raise ValueError(f'cannot import {ext}')
+
+
+def all_ids():
+    """Every data block in the file, across all of bpy.data's collections."""
+    ids = set()
+    for name in dir(bpy.data):
+        coll = getattr(bpy.data, name, None)
+        if isinstance(coll, bpy.types.bpy_prop_collection) and name not in ('window_managers', 'screens', 'workspaces'):
+            try:
+                ids.update(x for x in coll if isinstance(x, bpy.types.ID))
+            except TypeError:
+                pass
+    return ids
 
 
 def missing(img):

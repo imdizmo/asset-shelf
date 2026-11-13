@@ -40,20 +40,29 @@ def ini_texts(b):
 
 def descriptor(path):
     """(code modules, build-step commands) a .uplugin/.uproject declares; raises on anything not the expected shape."""
-    obj = json.load(open(path))
-    if not isinstance(obj, dict):
+    pairs = json.load(open(path), object_pairs_hook=list)
+    if not isinstance(pairs, list) or any(not isinstance(p, tuple) for p in pairs):
         raise ValueError('not a JSON object')
-    mods = obj.get('Modules') or []
+    keys = [k.lower() for k, _ in pairs]
+    if len(keys) != len(set(keys)):
+        raise DuplicateKeys(', '.join(sorted({k for k in keys if keys.count(k) > 1})))
+    # Unreal's JSON reader is not case-sensitive about these keys: compare in lower case
+    obj = {k.lower(): (dict(v) if isinstance(v, list) and all(isinstance(x, tuple) for x in v) else v) for k, v in pairs}
+    mods = obj.get('modules') or []
     if not isinstance(mods, list):
         raise ValueError('Modules is not a list')
     steps = []
-    for k in ('PreBuildSteps', 'PostBuildSteps'):  # shell commands Unreal runs when it builds the project or plugin
+    for k in ('prebuildsteps', 'postbuildsteps'):  # shell commands Unreal runs when it builds the project or plugin
         v = obj.get(k)
         if isinstance(v, dict):
             steps += [str(c) for cmds in v.values() for c in (cmds if isinstance(cmds, list) else [cmds])]
         elif v:
             steps.append(str(v))
-    return [m.get('Name', '?') if isinstance(m, dict) else '?' for m in mods], steps
+    return [dict(m).get('Name', '?') if isinstance(m, (dict, list)) else '?' for m in mods], steps
+
+
+class DuplicateKeys(ValueError):
+    pass
 
 
 def scan(pack):
@@ -90,7 +99,11 @@ def scan(pack):
                 if not clean:
                     add('review', 'Config file that does not read as clean text (encoding or NUL bytes)', p)
         elif ext in ('.uplugin', '.uproject'):
-            mods, steps = descriptor(p)
+            try:
+                mods, steps = descriptor(p)
+            except DuplicateKeys as e:
+                add('danger', 'Descriptor repeats keys that differ only in case (one reader may see another value)', p, str(e))
+                return
             if mods:
                 add('review', ('Plugin' if ext == '.uplugin' else 'Project') + ' with code modules', p, ', '.join(mods))
             if steps:

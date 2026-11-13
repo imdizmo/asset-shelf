@@ -369,20 +369,54 @@ internal static class Indexer
             return b.Length >= 24 ? (b[16] << 24 | b[17] << 16 | b[18] << 8 | b[19], b[20] << 24 | b[21] << 16 | b[22] << 8 | b[23]) : null;
         }
 
-        for (int i = 2; i + 9 < b.Length;)
+        // markers the way libjpeg walks them: fill bytes (FF FF ...) skipped, standalone markers (01, D0-D9) carry no
+        // length, every other segment's length is at least 2; the first frame header (SOF) gives the size
+        int i = 2;
+        while (i < b.Length)
         {
             if (b[i] != 0xFF)
             {
                 return null;
             }
 
-            int marker = b[i + 1], len = b[i + 2] << 8 | b[i + 3];
-            if (marker is >= 0xC0 and <= 0xCF and not 0xC4 and not 0xC8 and not 0xCC)
+            while (i < b.Length && b[i] == 0xFF)
             {
-                return (b[i + 7] << 8 | b[i + 8], b[i + 5] << 8 | b[i + 6]);
+                i++;
             }
 
-            i += 2 + len;
+            if (i >= b.Length)
+            {
+                return null;
+            }
+
+            int marker = b[i++];
+            if (marker is 0x01 or (>= 0xD0 and <= 0xD9))
+            {
+                if (marker == 0xD9)
+                {
+                    return null;  // end of image before any frame header
+                }
+
+                continue;
+            }
+
+            if (i + 2 > b.Length)
+            {
+                return null;
+            }
+
+            int len = b[i] << 8 | b[i + 1];
+            if (len < 2 || i + len > b.Length)
+            {
+                return null;
+            }
+
+            if (marker is >= 0xC0 and <= 0xCF and not 0xC4 and not 0xC8 and not 0xCC)
+            {
+                return len >= 7 ? (b[i + 5] << 8 | b[i + 6], b[i + 3] << 8 | b[i + 4]) : null;
+            }
+
+            i += len;
         }
 
         return null;
