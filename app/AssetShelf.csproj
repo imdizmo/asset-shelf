@@ -9,6 +9,7 @@
     <RootNamespace>AssetShelf</RootNamespace>
     <InvariantGlobalization>true</InvariantGlobalization>
     <Product>Asset Shelf</Product>
+    <ApplicationIcon>icon.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Avalonia" Version="12.1.4" />
