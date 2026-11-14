@@ -1,4 +1,4 @@
-# Builds Asset Shelf for Linux and Windows. A pushed tag v* publishes a GitHub release with both packages; running it
+# Builds Asset Shelf for Linux (tar.gz and AppImage) and Windows. A pushed tag v* publishes a GitHub release with them; running it
 # by hand (Actions > Release > Run workflow) only builds them and keeps them as workflow artifacts.
 name: Release
 
@@ -34,6 +34,7 @@ jobs:
           path: |
             dist/*.tar.gz
             dist/*.zip
+            dist/*.AppImage
           retention-days: 14
 
   release:

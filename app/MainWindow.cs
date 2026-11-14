@@ -265,11 +265,22 @@ public sealed class MainWindow : Window
             Padding = new Thickness(0),
             HorizontalContentAlignment = HorizontalAlignment.Center,
             VerticalContentAlignment = VerticalAlignment.Center,
-            Content = new Icon("layout-grid", 14),
             VerticalAlignment = VerticalAlignment.Center,
         };
         brand.Classes.Add("ep");
-        brand.Classes.Add("ep-primary");
+        string iconFile = Path.Combine(AppContext.BaseDirectory, "icon.png");
+        if (File.Exists(iconFile))
+        {
+            // the app icon itself, so the bar matches the taskbar
+            brand.Content = new Image { Source = new Avalonia.Media.Imaging.Bitmap(iconFile), Width = 22, Height = 22 };
+            brand.Background = Brushes.Transparent;
+        }
+        else
+        {
+            brand.Content = new Icon("layout-grid", 14);
+            brand.Classes.Add("ep-primary");
+        }
+
         Chrome.Tip(brand, "Show everything: clear the search, the tags and the kind tab.");
         brand.Click += (_, _) => ClearFilters();
 
@@ -1760,6 +1771,11 @@ public sealed class MainWindow : Window
 
     private async Task SignInAsync()
     {
+        if (!await FabSync.ReadyAsync(this, _settings, l => Dispatcher.UIThread.Post(() => _status.Text = $"Sync: {l}")))
+        {
+            return;
+        }
+
         string url = "";
         await FabSync.RunAsync(_settings, "fab_sync.py", ["login-url"], l => url = l.StartsWith("https://", StringComparison.Ordinal) ? l : url);
         if (url.Length == 0)
@@ -1782,6 +1798,11 @@ public sealed class MainWindow : Window
 
     private async Task ItchSignInAsync()
     {
+        if (!await FabSync.ReadyAsync(this, _settings, l => Dispatcher.UIThread.Post(() => _status.Text = $"Sync: {l}")))
+        {
+            return;
+        }
+
         await Launcher.LaunchUriAsync(new Uri("https://itch.io/user/settings/api-keys"));
         if (await Prompt.Ask(this, "Sign in to itch.io", "On the itch.io page that just opened, generate an API key (or copy an existing one) and paste it here:") is not { } k)
         {
@@ -1801,6 +1822,12 @@ public sealed class MainWindow : Window
         }
 
         _syncing = true;
+        if (!await FabSync.ReadyAsync(this, _settings, l => Dispatcher.UIThread.Post(() => _status.Text = $"Sync: {l}")))
+        {
+            _syncing = false;
+            return;
+        }
+
         string work = Path.Combine(Path.GetDirectoryName(Sender.Outbox())!, itch ? "sync-itch" : "sync");
         string script = itch ? "itch_sync.py" : "fab_sync.py", source = itch ? "itch.io" : "Fab";
         Directory.CreateDirectory(work);

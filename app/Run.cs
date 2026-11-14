@@ -37,12 +37,20 @@ public static class Run
         return psi;
     }
 
-    /// <summary>The Python that runs the tools: tools/.venv when it exists, else python3 (python on Windows).</summary>
-    public static string Python(Settings s)
-    {
-        string venv = OperatingSystem.IsWindows() ? Path.Combine(s.Tools, ".venv", "Scripts", "python.exe") : Path.Combine(s.Tools, ".venv", "bin", "python");
-        return File.Exists(venv) ? venv : OperatingSystem.IsWindows() ? "python" : "python3";
-    }
+    /// <summary>The Python that runs the tools: tools/.venv (a checkout) or <see cref="SyncVenv"/> when either exists,
+    /// else python3 (python on Windows).</summary>
+    public static string Python(Settings s) =>
+        new[] { VenvPython(Path.Combine(s.Tools, ".venv")), VenvPython(SyncVenv) }.FirstOrDefault(File.Exists) ?? BasePython;
+
+    /// <summary>The system's Python, used to make <see cref="SyncVenv"/>.</summary>
+    public static string BasePython => OperatingSystem.IsWindows() ? "python" : "python3";
+
+    /// <summary>Where the app sets up the sync tools' Python packages: under the user's data folder, since a release's
+    /// tools/ may be read-only (an AppImage).</summary>
+    public static string SyncVenv => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData, Environment.SpecialFolderOption.DoNotVerify), "asset-shelf", "venv");
+
+    public static string VenvPython(string venv) =>
+        OperatingSystem.IsWindows() ? Path.Combine(venv, "Scripts", "python.exe") : Path.Combine(venv, "bin", "python");
 
     public static string Blender(Settings s) => s.Blender.Length > 0 ? s.Blender : "blender";
 

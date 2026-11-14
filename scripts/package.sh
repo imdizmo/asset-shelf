@@ -22,6 +22,7 @@ cp "$root"/blender/*.py "$stage/blender/"
 cp -r "$root/unreal/AssetShelf" "$stage/unreal/"
 rm -rf "$stage/unreal/AssetShelf/Binaries" "$stage/unreal/AssetShelf/Intermediate"
 cp "$root/README.md" "$root/LICENSE" "$root/NOTICE.md" "$stage/"
+[[ "$rid" == linux-* ]] && cp "$root/scripts/install-desktop-entry.sh" "$stage/"
 cd "$out"
 if [[ "$rid" == win-* ]]; then
     rm -f "$name.zip"; (command -v zip >/dev/null && zip -qr "$name.zip" "$name") || python3 -c "import shutil,sys; shutil.make_archive(sys.argv[1], 'zip', '.', sys.argv[1])" "$name"
@@ -29,4 +30,39 @@ if [[ "$rid" == win-* ]]; then
 else
     tar -czf "$name.tar.gz" "$name"
     echo "$out/$name.tar.gz"
+fi
+
+# Linux x64 also gets an AppImage: the same folder, plus the files an AppImage needs at its root. appimagetool and the
+# runtime are pinned releases, checked by SHA-256, cached in $APPIMAGE_CACHE.
+if [[ "$rid" == linux-x64 ]]; then
+    cache="${APPIMAGE_CACHE:-$HOME/.cache/asset-shelf/appimage}"
+    mkdir -p "$cache"
+    fetch() { # url sha256 file
+        if ! echo "$2  $cache/$3" | sha256sum -c --status 2>/dev/null; then
+            curl -fsSL --retry 3 -o "$cache/$3.part" "$1"
+            echo "$2  $cache/$3.part" | sha256sum -c --quiet
+            mv "$cache/$3.part" "$cache/$3"
+        fi
+    }
+    fetch https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage \
+        ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0 appimagetool-1.9.1-x86_64.AppImage
+    fetch https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-x86_64 \
+        2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d runtime-20251108-x86_64
+    chmod +x "$cache/appimagetool-1.9.1-x86_64.AppImage"
+    appdir="$name.AppDir"
+    rm -rf "${appdir:?}"; cp -r "$name" "$appdir"
+    rm -f "$appdir/install-desktop-entry.sh"  # AppImage launchers add the menu entry themselves
+    printf '#!/bin/sh\nexec "$(dirname "$(readlink -f "$0")")/AssetShelf" "$@"\n' > "$appdir/AppRun"
+    chmod +x "$appdir/AppRun"
+    cp "$root/app/icon.png" "$appdir/asset-shelf.png"
+    cp "$root/app/icon.png" "$appdir/.DirIcon"
+    printf '%s\n' '[Desktop Entry]' 'Type=Application' 'Name=Asset Shelf' \
+        'Comment=Browse a 3D asset library and send assets to Unreal, Blender and Unity' 'Exec=AssetShelf' \
+        'Icon=asset-shelf' 'Terminal=false' 'Categories=Graphics;3DGraphics;' 'StartupWMClass=AssetShelf' \
+        > "$appdir/asset-shelf.desktop"
+    rm -f "$name.AppImage"
+    ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 "$cache/appimagetool-1.9.1-x86_64.AppImage" --no-appstream \
+        --runtime-file "$cache/runtime-20251108-x86_64" "$appdir" "$name.AppImage" >&2
+    rm -rf "${appdir:?}"
+    echo "$out/$name.AppImage"
 fi

@@ -31,11 +31,13 @@ Status: 0.1, used daily on Linux; Windows and macOS are untested.
 
 ## Download
 
-Releases have a package for Linux (x64, `.tar.gz`) and Windows (x64, `.zip`): unpack it anywhere and run `AssetShelf`
-(`AssetShelf.exe`). .NET is included. Blender, Python and Unreal are found on the `PATH` or set in `settings.json`
-(`Blender`). Windows builds are made by the same CI but not yet tested on Windows; reports are welcome.
+Releases have packages for Linux (x64: an `.AppImage`, or a `.tar.gz`) and Windows (x64, `.zip`). The AppImage is one
+file: make it executable and run it (an AppImage launcher such as Gear Lever adds it to the app menu). The archives
+unpack anywhere; run `AssetShelf` (`AssetShelf.exe`), and on Linux `./install-desktop-entry.sh` adds it to the app menu
+with its icon (run it again after moving the folder; `--remove` takes it out). .NET is included. Blender, Python and
+Unreal are found on the `PATH` or set in `settings.json` (`Blender`). Windows builds are made by the same CI but not yet tested on Windows; reports are welcome.
 
-To make a release: push a tag such as `v0.2.0` (`.github/workflows/release.yml` builds both packages with
+To make a release: push a tag such as `v0.2.0` (`.github/workflows/release.yml` builds the packages with
 `scripts/package.sh` and publishes them).
 
 ## Requirements
@@ -46,7 +48,7 @@ To make a release: push a tag such as `v0.2.0` (`.github/workflows/release.yml` 
 | Indexing Unreal packs | nothing more (ShelfIndex, .NET) |
 | Exporting Unreal assets to Blender/Unity | Unreal Engine 5 (`~/UnrealEngine` or set `--engine`) |
 | Loose files, materials, turntables, Unity prep | Blender 5.1 or later on the `PATH` |
-| Fab and itch.io sync | Python 3.11+, `tools/requirements.txt` (legendary-gl, requests), `secret-tool` (libsecret) |
+| Fab and itch.io sync | Python 3.11+ and `secret-tool` (libsecret); the first sync offers to set up its packages (legendary-gl, requests) in `~/.local/share/asset-shelf/venv` |
 | Unity | a Unity project (tested with Unity 6; glTF models are not handled yet) |
 
 ## Setup

@@ -15,14 +15,58 @@ public static class FabSync
     public static async Task<int> RunAsync(Settings s, string script, IEnumerable<string> args, Action<string> line, string memory = "2G", string? stdin = null)
     {
         ProcessStartInfo psi = Run.Capped(memory, false, Run.Python(s), "-I", "-u", Path.Combine(s.Tools, script));
-        psi.RedirectStandardOutput = true;
-        psi.RedirectStandardError = true;
-        psi.RedirectStandardInput = stdin is not null;
         foreach (string a in args)
         {
             psi.ArgumentList.Add(a);
         }
 
+        return await RunAsync(psi, line, stdin).ConfigureAwait(false);
+    }
+
+    /// <summary>True when the sync tools' Python has their packages (legendary-gl, requests). Otherwise asks to set them up
+    /// in <see cref="Run.SyncVenv"/> and does it, reporting through <paramref name="line"/>.</summary>
+    public static async Task<bool> ReadyAsync(Window owner, Settings s, Action<string> line)
+    {
+        if (await Quiet(Run.Python(s), "-I", "-c", "import legendary, requests").ConfigureAwait(true) == 0)
+        {
+            return true;
+        }
+
+        if (!await Prompt.Confirm(owner, "Set up sync", $"Fab and itch.io sync need two Python packages, legendary-gl and requests. Download them from PyPI into {Run.SyncVenv}? This is done once. Python 3.11 or later must be installed.", "Set up").ConfigureAwait(true))
+        {
+            return false;
+        }
+
+        string py = Run.VenvPython(Run.SyncVenv);
+        line("setting up Python packages…");
+        if (await Quiet(Run.BasePython, "-m", "venv", Run.SyncVenv).ConfigureAwait(true) != 0
+            || await RunAsync(new ProcessStartInfo(py) { ArgumentList = { "-I", "-m", "pip", "install", "-q", "-r", Path.Combine(s.Tools, "requirements.txt") } }, line, null).ConfigureAwait(true) != 0
+            || await Quiet(py, "-I", "-c", "import legendary, requests").ConfigureAwait(true) != 0)
+        {
+            line($"could not set up the Python packages (is Python 3.11+ installed as {Run.BasePython}? see the debug log)");
+            return false;
+        }
+
+        line("Python packages ready");
+        return true;
+    }
+
+    private static async Task<int> Quiet(string exe, params string[] args)
+    {
+        var psi = new ProcessStartInfo(exe);
+        foreach (string a in args)
+        {
+            psi.ArgumentList.Add(a);
+        }
+
+        return await RunAsync(psi, _ => { }, null).ConfigureAwait(false);
+    }
+
+    private static async Task<int> RunAsync(ProcessStartInfo psi, Action<string> line, string? stdin)
+    {
+        psi.RedirectStandardOutput = true;
+        psi.RedirectStandardError = true;
+        psi.RedirectStandardInput = stdin is not null;
         using Process p = new() { StartInfo = psi };
         void Got(object? _, DataReceivedEventArgs e)
         {
@@ -35,7 +79,16 @@ public static class FabSync
 
         p.OutputDataReceived += Got;
         p.ErrorDataReceived += Got;
-        p.Start();
+        try
+        {
+            p.Start();
+        }
+        catch (System.ComponentModel.Win32Exception e)
+        {
+            Log.Write("fab", $"{psi.FileName}: {e.Message}");
+            return -1;
+        }
+
         p.BeginOutputReadLine();
         p.BeginErrorReadLine();
         if (stdin is not null)

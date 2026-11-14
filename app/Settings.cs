@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace AssetShelf;
 
@@ -8,7 +9,25 @@ public sealed class Settings
     public string Packs { get; set; } = "";
     public string Index { get; set; } = "";
     public string UnrealProject { get; set; } = "";
-    public string Tools { get; set; } = "";
+
+    /// <summary>The tools/ folder beside the app (a release) or above the build output (the repo). Found on every start
+    /// and never saved: an AppImage runs from a mount point that changes each time, and a "Tools" entry an older version
+    /// saved in settings.json could point at an old copy.</summary>
+    [JsonIgnore]
+    public string Tools => FoundTools.Value;
+
+    private static readonly Lazy<string> FoundTools = new(() =>
+    {
+        for (string? d = AppContext.BaseDirectory; d is not null; d = Path.GetDirectoryName(d))
+        {
+            if (File.Exists(Path.Combine(d, "tools", "export_fbx.py")))
+            {
+                return Path.Combine(d, "tools");
+            }
+        }
+
+        return "";
+    });
 
     /// <summary>Blender's executable; empty: "blender" on the PATH.</summary>
     public string Blender { get; set; } = "";
@@ -29,21 +48,7 @@ public sealed class Settings
 
     public static Settings Load()
     {
-        Settings s = File.Exists(FilePath) ? JsonSerializer.Deserialize<Settings>(File.ReadAllText(FilePath)) ?? new() : new();
-        if (s.Tools.Length == 0)
-        {
-            // the repo's tools/ folder above the build output
-            for (string? d = AppContext.BaseDirectory; d is not null; d = Path.GetDirectoryName(d))
-            {
-                if (File.Exists(Path.Combine(d, "tools", "export_fbx.py")))
-                {
-                    s.Tools = Path.Combine(d, "tools");
-                    break;
-                }
-            }
-        }
-
-        return s;
+        return File.Exists(FilePath) ? JsonSerializer.Deserialize<Settings>(File.ReadAllText(FilePath)) ?? new() : new();
     }
 
     public void Save()
