@@ -127,12 +127,23 @@ public static class Sender
         File.Move(job + ".part", job);
     }
 
-    /// <summary>Exports an Unreal asset to FBX (with its textures as PNG) through the tools' headless editor.</summary>
-    /// <returns>The export folder and the FBX files in it.</returns>
-    public static async Task<(string Dir, List<string> Fbx)> ExportAsync(Item item, Settings settings, string engine)
+    /// <summary>Exports an Unreal asset with its textures: ShelfIndex reads the editor packages itself (static meshes, to
+    /// .glb, in a second or two); anything it does not handle goes through Unreal's headless editor (FBX), and only
+    /// then is <paramref name="engine"/> asked for (it may install Unreal).</summary>
+    /// <returns>The export folder and the model files in it.</returns>
+    public static async Task<(string Dir, List<string> Fbx)> ExportAsync(Item item, Settings settings, Func<Task<string>> engine)
     {
         string outDir = CacheDir(Path.Combine(Path.GetDirectoryName(Outbox())!, "exports"), item);
-        // the asset and every package it needs: only these are copied out of the pack, so Unreal scans a handful of files
+        List<string> Models() => Directory.Exists(outDir)
+            ? Directory.GetFiles(outDir).Where(f => f.EndsWith(".glb", StringComparison.OrdinalIgnoreCase) || f.EndsWith(".fbx", StringComparison.OrdinalIgnoreCase)).ToList()
+            : [];
+        if (File.Exists(Path.Combine(outDir, ".done")) && Models() is { Count: > 0 } done)
+        {
+            Directory.SetLastWriteTime(outDir, DateTime.Now);
+            return (outDir, done);
+        }
+
+        // the asset and every package it needs: only these are copied out of the pack, so a handful of files is read
         List<Item> needs = Library.Needs(item);
         string jobFile = outDir + ".job.json";
         Directory.CreateDirectory(Path.GetDirectoryName(jobFile)!);
@@ -145,9 +156,23 @@ public static class Sender
             packages = needs.Select(i => i.Package).Prepend(item.Package).ToList(),
             textures = needs.Where(i => i.Class == "Texture2D").Select(i => i.Path).ToList(),
         })).ConfigureAwait(false);
+        if (Run.ShelfIndex(settings) is { } shelfIndex)
+        {
+            using var quick = Log.Time("export", $"{item.Name}: without Unreal");
+            var (exit, said) = await RunLogged(Run.Capped("4G", false, shelfIndex, "export", "--job", jobFile), () => quick.Ms).ConfigureAwait(false);
+            if (exit == 0 && Models() is { Count: > 0 } models)
+            {
+                File.Delete(jobFile);
+                return (outDir, models);
+            }
+
+            Log.Write("export", exit == 3 ? $"{item.Class}: through Unreal" : $"without Unreal failed ({exit}): {said.Trim()}; through Unreal");
+        }
+
+        string unreal = await engine().ConfigureAwait(false);
         var psi = new ProcessStartInfo(Run.Python(settings))
         {
-            ArgumentList = { "-I", "-u", Path.Combine(settings.Tools, "export_fbx.py"), "--engine", engine, "--job", jobFile },
+            ArgumentList = { "-I", "-u", Path.Combine(settings.Tools, "export_fbx.py"), "--engine", unreal, "--job", jobFile },
             RedirectStandardOutput = true,
             RedirectStandardError = true,
         };
@@ -176,7 +201,7 @@ public static class Sender
         await p.WaitForExitAsync().ConfigureAwait(false);
         string log = output.ToString();
         File.Delete(jobFile);
-        List<string> fbx = Directory.Exists(outDir) ? Directory.GetFiles(outDir, "*.fbx").ToList() : [];
+        List<string> fbx = Models();
         if (p.ExitCode != 0 || fbx.Count == 0)
         {
             throw new InvalidOperationException("export failed: " + log[Math.Max(0, log.Length - 400)..]);
@@ -185,8 +210,41 @@ public static class Sender
         return (outDir, fbx);
     }
 
+    /// <summary>Runs a tool, logging each line it prints; its exit code and its last lines.</summary>
+    private static async Task<(int Exit, string Output)> RunLogged(ProcessStartInfo psi, Func<double> ms)
+    {
+        psi.RedirectStandardOutput = true;
+        psi.RedirectStandardError = true;
+        using Process p = new() { StartInfo = psi };
+        var tail = new Queue<string>();
+        void Line(object? _, DataReceivedEventArgs e)
+        {
+            if (e.Data is { Length: > 0 } l)
+            {
+                lock (tail)
+                {
+                    tail.Enqueue(l);
+                    if (tail.Count > 8) tail.Dequeue();
+                }
+
+                Log.Write("export", l.Length > 2000 ? l[..2000] + "…" : l, ms());
+            }
+        }
+
+        p.OutputDataReceived += Line;
+        p.ErrorDataReceived += Line;
+        p.Start();
+        p.BeginOutputReadLine();
+        p.BeginErrorReadLine();
+        await p.WaitForExitAsync().ConfigureAwait(false);
+        lock (tail)
+        {
+            return (p.ExitCode, string.Join('\n', tail));
+        }
+    }
+
     /// <summary>Exports an Unreal asset to FBX and hands it to the open Blender.</summary>
-    public static async Task<string> UnrealToBlenderAsync(Item item, Settings settings, string engine)
+    public static async Task<string> UnrealToBlenderAsync(Item item, Settings settings, Func<Task<string>> engine)
     {
         var (dir, fbx) = await ExportAsync(item, settings, engine).ConfigureAwait(false);
         ToBlender(item.Name, fbx, dir, unreal: true);

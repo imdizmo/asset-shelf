@@ -16,7 +16,7 @@ publish=(-c Release -r "$rid" --self-contained -p:PublishSingleFile=true -p:Incl
 dotnet publish "$root/app/AssetShelf.csproj" "${publish[@]}" -o "$stage"
 dotnet publish "$root/tools/ShelfIndex/ShelfIndex.csproj" "${publish[@]}" -o "$stage/tools/ShelfIndex"
 cp "$root"/tools/*.py "$root/tools/requirements.txt" "$stage/tools/"
-cp "$root/tools/ShelfIndex/Program.cs" "$root/tools/ShelfIndex/ShelfIndex.csproj" "$stage/tools/ShelfIndex/"
+cp "$root"/tools/ShelfIndex/*.cs "$root/tools/ShelfIndex/ShelfIndex.csproj" "$stage/tools/ShelfIndex/"
 mkdir -p "$stage/blender" "$stage/unreal"
 cp "$root"/blender/*.py "$stage/blender/"
 cp -r "$root/unreal/AssetShelf" "$stage/unreal/"

@@ -49,7 +49,8 @@ To make a release: push a tag such as `v0.2.0` (`.github/workflows/release.yml` 
 |---|---|
 | The app | nothing for a release package; the .NET 10 SDK to build from source |
 | Indexing Unreal packs | nothing more (ShelfIndex, .NET) |
-| Exporting Unreal assets to Blender/Unity/Groundwork | Unreal Engine 5.8 or later. On Windows the app offers to install it through Epic's launcher (installing the launcher too) when none is found; elsewhere put it in `~/UnrealEngine` or set `UnrealEngine` in the settings |
+| Exporting Unreal meshes, characters and animations to Blender/Unity/Groundwork | nothing more: meshes, skinned characters with their skeleton, animations (UE 4 and UE 5, including 5.2+ sequencer data) and textures wired as each material uses them are read straight from the packages (ShelfIndex) |
+| Exporting other Unreal assets (effects, blueprints, maps) | Unreal Engine 5.8 or later. On Windows the app offers to install it through Epic's launcher (installing the launcher too) when none is found; elsewhere put it in `~/UnrealEngine` or set `UnrealEngine` in the settings |
 | Loose files, materials, turntables, Unity prep | Blender 5.1 or later on the `PATH` |
 | Fab and itch.io sync | `secret-tool` (libsecret) on Linux; the first sync offers to set up its packages (legendary-gl, requests) in `~/.local/share/asset-shelf/venv` |
 | Unity | a Unity project (tested with Unity 6; glTF models are not handled yet) |
@@ -57,6 +58,7 @@ To make a release: push a tag such as `v0.2.0` (`.github/workflows/release.yml` 
 ## Setup
 
 ```sh
+git submodule update --init   # third_party/CUE4Parse
 dotnet build app -c Release
 dotnet build tools/ShelfIndex -c Release
 python3 -m venv tools/.venv && tools/.venv/bin/pip install -r tools/requirements.txt
@@ -107,7 +109,7 @@ opens in member mode: Sync and sign-in are hidden, so only the owner syncs and i
 | Script | Does |
 |---|---|
 | `tools/index_library.py` | indexes every pack that has no index yet (`--kind unreal|raw`, `--redo <list>`), then scans it |
-| `tools/ShelfIndex` | indexes one Unreal pack without Unreal (CUE4Parse; only the files' headers are read) |
+| `tools/ShelfIndex` | indexes one Unreal pack without Unreal (CUE4Parse; only the files' headers are read); `export --job` writes a mesh, character or animation as .glb, its textures as PNG and how its materials use them (materials.json), also without Unreal |
 | `tools/index_raw.py` | indexes one pack of loose files with headless Blender |
 | `tools/safety_scan.py` | lists what in a pack can run code (startup scripts, binaries, C++, plugins, config commands) |
 | `tools/export_fbx.py` | exports one Unreal asset to FBX and its textures, in a small throwaway project |

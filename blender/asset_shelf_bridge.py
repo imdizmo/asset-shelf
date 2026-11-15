@@ -28,7 +28,7 @@ ROLES = [
     ('orm', re.compile(r'(_orm|_arm|occlusion_?roughness_?metal)', re.I)),
     ('mra', re.compile(r'(_mra|metal_?rough_?(ao|occlusion))', re.I)),
     ('rma', re.compile(r'(_rma\b|rough_?metal_?(ao|occlusion))', re.I)),
-    ('base', re.compile(r'(base_?colou?r|albedo|diffu|_d\b|_bc\b|_col\b|_basecolor)', re.I)),
+    ('base', re.compile(r'(base_?colou?r|albedo|diffu|_d\b|_b\b|_a\b|_bc\b|_col\b|_basecolor)', re.I)),
     ('normal', re.compile(r'(normal|_n\b|_nrm\b|_nor\b)', re.I)),
     ('rough', re.compile(r'(rough|_r\b)', re.I)),
     ('metal', re.compile(r'(metal|_m\b)', re.I)),
@@ -37,7 +37,9 @@ ROLES = [
 ]
 # which channel of a packed map holds what
 PACKED = {'orm': {'G': 'Roughness', 'B': 'Metallic'}, 'mra': {'R': 'Metallic', 'G': 'Roughness'},
-          'rma': {'R': 'Roughness', 'G': 'Metallic'}}
+          'rma': {'R': 'Roughness', 'G': 'Metallic'},
+          # one channel of a packed map, as the exporter reads it from the material
+          **{f'rough_{c.lower()}': {c: 'Roughness'} for c in 'RGB'}, **{f'metal_{c.lower()}': {c: 'Metallic'} for c in 'RGB'}}
 WORD = re.compile(r'[a-z]{3,}')
 NOISE = {'mat', 'material', 'inst', 'instance', 'tex', 'texture', 'master'}
 
@@ -107,7 +109,7 @@ def words(s):
     return set(WORD.findall(s.lower())) - NOISE
 
 
-def wire(m, files, by_role, single, unreal):
+def wire(m, files, by_role, single, unreal, explicit=None):
     """Plugs the textures that belong to material m into its Principled BSDF: base colour, normal (DirectX for
     Unreal), roughness, metallic, packed ORM/MRA/RMA, emission, opacity. Inputs that already work are left alone."""
     nt = m.node_tree
@@ -117,6 +119,10 @@ def wire(m, files, by_role, single, unreal):
     mw = words(m.name)
 
     def pick(role):
+        if explicit and role in explicit:
+            return explicit[role]
+        if explicit and role in PACKED and any(r in explicit for r in ('rough', 'metal', *PACKED)):
+            return None  # the material's graph already said how roughness and metallic come in
         cands = by_role.get(role, [])
         scored = sorted(((len(mw & words(os.path.basename(p))), p) for p in cands), key=lambda x: -x[0])
         if scored and (scored[0][0] > 0 or single):
@@ -160,9 +166,12 @@ def wire(m, files, by_role, single, unreal):
         nt.links.new(t.outputs['Color'], nm.inputs['Color'])
         nt.links.new(nm.outputs['Normal'], bsdf.inputs['Normal'])
         done.append('normal')
-    packed = next(((r, p) for r in PACKED if (p := pick(r))), None)
-    if packed and not (works('Roughness') and works('Metallic')):
-        role, p = packed
+    packed = [(r, p) for r in PACKED if (p := pick(r))]
+    if not explicit:
+        packed = packed[:1]  # by name: the first packed map found
+    for role, p in packed:
+        if all(works(inp) for inp in PACKED[role].values()):
+            continue
         t = image(p, color=False, x=-900, y=0)
         sep = nt.nodes.new('ShaderNodeSeparateColor')
         sep.location = (bsdf.location.x - 400, bsdf.location.y)
@@ -170,12 +179,11 @@ def wire(m, files, by_role, single, unreal):
         for ch, inp in PACKED[role].items():
             nt.links.new(sep.outputs[{'R': 'Red', 'G': 'Green', 'B': 'Blue'}[ch]], bsdf.inputs[inp])
         done.append(role)
-    else:
-        for role, inp, y in (('rough', 'Roughness', -100), ('metal', 'Metallic', 100)):
-            if not works(inp) and (p := pick(role)):
-                t = image(p, color=False, y=y)
-                nt.links.new(t.outputs['Color'], bsdf.inputs[inp])
-                done.append(role)
+    for role, inp, y in (('rough', 'Roughness', -100), ('metal', 'Metallic', 100)):
+        if not works(inp) and (p := pick(role)):
+            t = image(p, color=False, y=y)
+            nt.links.new(t.outputs['Color'], bsdf.inputs[inp])
+            done.append(role)
     if not works('Emission Color') and (p := pick('emit')):
         t = image(p, y=-700)
         nt.links.new(t.outputs['Color'], bsdf.inputs['Emission Color'])
@@ -200,6 +208,15 @@ def link_textures(objects, tex_dir, unreal=False):
         if (r := role_of(p)):
             by_role.setdefault(r, []).append(p)
     mats = {s.material for o in objects for s in o.material_slots if s.material and s.material.node_tree}
+    # materials.json (written by the exporter from each material's own graph): material name -> role -> file
+    wiring = {}
+    try:
+        with open(os.path.join(tex_dir, 'materials.json')) as f:
+            wiring = {k.lower(): {r: os.path.join(tex_dir, os.path.basename(v)) for r, v in roles.items()
+                                  if os.path.isfile(os.path.join(tex_dir, os.path.basename(v)))}
+                      for k, roles in json.load(f).items()}
+    except (OSError, ValueError, AttributeError):
+        pass
     report = {}
     for m in mats:
         for n in m.node_tree.nodes:
@@ -217,7 +234,8 @@ def link_textures(objects, tex_dir, unreal=False):
                     n.image.reload()
             if unreal and n.type == 'NORMAL_MAP':
                 n.convention = 'DIRECTX'  # the FBX importer wires Unreal's normal maps as OpenGL
-        report[m.name] = wire(m, files, by_role, single=len(mats) == 1, unreal=unreal)
+        base_name = re.sub(r'\.\d{3}$', '', m.name).lower()
+        report[m.name] = wire(m, files, by_role, single=len(mats) == 1, unreal=unreal, explicit=wiring.get(base_name))
     return report
 
 

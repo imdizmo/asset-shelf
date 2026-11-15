@@ -1,0 +1,4 @@
+[submodule "third_party/CUE4Parse"]
+	path = third_party/CUE4Parse
+	url = https://github.com/imdizmo/CUE4Parse.git
+	branch = asset-shelf

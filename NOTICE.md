@@ -33,8 +33,16 @@ https://github.com/AHS12/easy-props
 
 ## CUE4Parse
 
-`tools/ShelfIndex` uses CUE4Parse (https://github.com/FabianFG/CUE4Parse) as a NuGet package, under the Apache
-License 2.0 (https://www.apache.org/licenses/LICENSE-2.0). Asset Shelf does not modify it.
+`tools/ShelfIndex` uses CUE4Parse (https://github.com/FabianFG/CUE4Parse), under the Apache License 2.0
+(https://www.apache.org/licenses/LICENSE-2.0). It is built from `third_party/CUE4Parse`, a fork
+(https://github.com/imdizmo/CUE4Parse, branch `asset-shelf`) with fixes for uncooked (editor) packages; each change
+is a commit there and is offered back to CUE4Parse.
+
+## OodleSharp
+
+CUE4Parse decodes Oodle-compressed data (Kraken, Mermaid, Selkie, Leviathan) with OodleSharp
+(https://github.com/NotOfficer/OodleSharp), a C# port by NotOfficer, used as a NuGet package under the MIT licence.
+Asset Shelf does not modify it.
 
 ## Python
 

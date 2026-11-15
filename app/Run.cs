@@ -53,6 +53,13 @@ public static class Run
     public static string VenvPython(string venv) =>
         OperatingSystem.IsWindows() ? Path.Combine(venv, "Scripts", "python.exe") : Path.Combine(venv, "bin", "python");
 
+    /// <summary>ShelfIndex: published beside the tools in a release, or the build output in the repo; null when not built.</summary>
+    public static string? ShelfIndex(Settings s)
+    {
+        string exe = OperatingSystem.IsWindows() ? "ShelfIndex.exe" : "ShelfIndex";
+        return new[] { Path.Combine(s.Tools, "ShelfIndex", exe), Path.Combine(s.Tools, "ShelfIndex", "bin", "Release", "net10.0", exe) }.FirstOrDefault(File.Exists);
+    }
+
     public static string Blender(Settings s) => s.Blender.Length > 0 ? s.Blender : "blender";
 
     private static bool OnPath(string exe) =>

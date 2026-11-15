@@ -8,6 +8,6 @@
     <InvariantGlobalization>true</InvariantGlobalization>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="CUE4Parse" Version="1.2.2.202611" />
+    <ProjectReference Include="../../third_party/CUE4Parse/CUE4Parse/CUE4Parse.csproj" />
   </ItemGroup>
 </Project>

@@ -1684,7 +1684,7 @@ public sealed class MainWindow : Window
             }
             else
             {
-                var (dir, fbx) = await Sender.ExportAsync(item, _settings, await UnrealSetup.EnsureAsync(this, _settings));
+                var (dir, fbx) = await Sender.ExportAsync(item, _settings, UnrealEngine);
                 frames = await Turntable.FramesAsync(item, fbx, dir, unreal: true, blenderDir, _settings);
             }
 
@@ -1722,7 +1722,7 @@ public sealed class MainWindow : Window
             {
                 _status.Text = $"{item.Name}: exporting through Unreal (about 20 seconds)…";
                 Busy(null);
-                var (dir, fbx) = await Sender.ExportAsync(item, _settings, await UnrealSetup.EnsureAsync(this, _settings));
+                var (dir, fbx) = await Sender.ExportAsync(item, _settings, UnrealEngine);
                 Sender.OpenInBlender(item.Name, fbx, dir, blenderDir, _settings, unreal: true);
             }
 
@@ -1762,7 +1762,7 @@ public sealed class MainWindow : Window
                 else
                 {
                     _status.Text = $"{item.Name}: exporting through Unreal{(targets.Count > 1 ? $" ({sent + 1} of {targets.Count})" : "")}…";
-                    await Sender.UnrealToBlenderAsync(item, _settings, await UnrealSetup.EnsureAsync(this, _settings));
+                    await Sender.UnrealToBlenderAsync(item, _settings, UnrealEngine);
                 }
 
                 sent++;
@@ -1784,6 +1784,9 @@ public sealed class MainWindow : Window
             _toBlender.IsEnabled = true;
         }
     }
+
+    /// <summary>The Unreal Engine for exports that need it, asked for on the UI thread (it may show the install window).</summary>
+    private Task<string> UnrealEngine() => Dispatcher.UIThread.InvokeAsync(() => UnrealSetup.EnsureAsync(this, _settings));
 
     private async Task SendToGroundworkAsync()
     {
@@ -1810,7 +1813,7 @@ public sealed class MainWindow : Window
                 else
                 {
                     _status.Text = $"{item.Name}: exporting through Unreal{(targets.Count > 1 ? $" ({parts.Count + 1} of {targets.Count})" : "")}…";
-                    var (dir, fbx) = await Sender.ExportAsync(item, _settings, await UnrealSetup.EnsureAsync(this, _settings));
+                    var (dir, fbx) = await Sender.ExportAsync(item, _settings, UnrealEngine);
                     parts.Add(new(item, fbx, dir, true));
                 }
             }
@@ -2022,7 +2025,7 @@ public sealed class MainWindow : Window
                 }
                 else
                 {
-                    var (dir, fbx) = await Sender.ExportAsync(item, _settings, await UnrealSetup.EnsureAsync(this, _settings));
+                    var (dir, fbx) = await Sender.ExportAsync(item, _settings, UnrealEngine);
                     lines.Add(await UnitySender.SendAsync(item, fbx, dir, unreal: true, _settings, blenderDir));
                 }
 

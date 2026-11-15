@@ -170,7 +170,7 @@ public static class UnrealSetup
             Button go = Chrome.PrimaryButton("download", "Install", $"Install Unreal Engine {Version} with Epic's launcher.");
             cancel.Click += (_, _) => Close(null);
             Closed += (_, _) => _stop.Cancel();
-            _step.Text = $"Sending Unreal assets to Blender, Unity or Groundwork needs Unreal Engine {Version} on this computer (it exports them). It is free, and takes about 40 GB.";
+            _step.Text = $"Meshes, characters and animations are exported without Unreal, but this kind of asset needs Unreal Engine {Version} on this computer to export it. It is free, and takes about 40 GB.";
             _hint.Text = LauncherExe() is null
                 ? "Install sets up Epic Games Launcher (Epic's official installer; Windows asks to allow it), then opens Unreal Engine's install in it. You sign in to Epic there and confirm the folder. Asset Shelf waits and carries on when it is done."
                 : "Install opens Unreal Engine's install in Epic Games Launcher. You sign in to Epic there if asked and confirm the folder. Asset Shelf waits and carries on when it is done.";
