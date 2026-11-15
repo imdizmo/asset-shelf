@@ -91,13 +91,21 @@ public static class UnrealSetup
             return [.. d.RootElement.GetProperty("InstallationList").EnumerateArray()
                 .Where(e => e.GetProperty("AppName").GetString()?.StartsWith("UE_", StringComparison.Ordinal) == true)
                 .Select(e => e.GetProperty("InstallLocation").GetString() ?? "")
-                .Where(p => p.Length > 0 && Path.IsPathFullyQualified(p))];
+                .Where(p => p.Length > 0 && Path.IsPathFullyQualified(p) && Plain(p))];
         }
         catch (Exception e) when (e is IOException or JsonException or KeyNotFoundException or UnauthorizedAccessException or InvalidOperationException)
         {
             return [];  // no launcher, or nothing installed with it
         }
     }
+
+    /// <summary>No control, format (bidi, zero-width) or separator characters other than a space: the user is asked
+    /// about these paths, and must see the one that is used.</summary>
+    // ponytail: folder owner/ACL not checked; the user confirms the path, add an owner check if that proves too weak
+    private static bool Plain(string path) => path.All(c => c == ' ' || char.GetUnicodeCategory(c) is not (
+        System.Globalization.UnicodeCategory.Control or System.Globalization.UnicodeCategory.Format
+        or System.Globalization.UnicodeCategory.LineSeparator or System.Globalization.UnicodeCategory.ParagraphSeparator
+        or System.Globalization.UnicodeCategory.SpaceSeparator));
 
     private static string? Usable(IEnumerable<string> engines) => engines.Where(p => Editor(p) is not null && Minor(p) >= Minor(Version)).MaxBy(Minor);
 
