@@ -30,6 +30,7 @@ public static class Shared
         if (OperatingSystem.IsWindows())
         {
             SaveWindowsCredential(host, user, password);
+            ConnectWindows($@"\\{host}\{share}", user, password);
             root = $@"\\{host}\{share}" + (rest.Length > 0 ? @"\" + rest.Replace('/', '\\') : "");
         }
         else if (OperatingSystem.IsLinux())
@@ -44,25 +45,50 @@ public static class Shared
             throw new InvalidOperationException("Connect to the share in Finder (Go > Connect to Server), then set Packs and Index in settings.json.");
         }
 
-        if (!Directory.Exists(Path.Combine(root, "packs")) || !Directory.Exists(Path.Combine(root, "index")))
+        string[] found;
+        try
         {
-            throw new InvalidOperationException($"Connected, but {root} has no packs and index folders (check the folder in the address).");
+            found = [.. Directory.EnumerateDirectories(root).Select(Path.GetFileName)!];
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            throw new InvalidOperationException($"Connected, but {root} cannot be read: {e.Message}");
+        }
+
+        if (!found.Contains("packs", StringComparer.OrdinalIgnoreCase) || !found.Contains("index", StringComparer.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException($"Connected, but {root} has no packs and index folders (it has: {string.Join(", ", found.Take(8))}; check the folder in the address).");
         }
 
         return root;
     }
 
-    /// <summary>At start (Linux): mounts the share again when the library is missing, with the password from the
-    /// keyring. Windows reconnects by itself with the saved credential.</summary>
+    /// <summary>At start: connects the share again when the library is missing, with the saved password (Linux: the
+    /// keyring and a gvfs mount; Windows: Asset Shelf's entry in Credential Manager).</summary>
     public static void Reconnect(Settings s)
     {
-        if (!OperatingSystem.IsLinux() || s.Share.Length == 0 || Directory.Exists(s.Packs) || Parse(s.Share) is not { } a)
+        if (s.Share.Length == 0 || Directory.Exists(s.Packs) || Parse(s.Share) is not { } a)
         {
             return;
         }
 
         try
         {
+            if (OperatingSystem.IsWindows())
+            {
+                if (ReadWindowsPassword(a.Host, s.ShareUser) is { } wpw)
+                {
+                    ConnectWindows($@"\\{a.Host}\{a.Share}", s.ShareUser, wpw);
+                }
+
+                return;
+            }
+
+            if (!OperatingSystem.IsLinux())
+            {
+                return;
+            }
+
             if (RunText("secret-tool", null, "lookup", "service", "asset-shelf", "account", KeyringAccount(a.Host, s.ShareUser)) is (0, { Length: > 0 } pw))
             {
                 GioMount(a.Host, a.Share, s.ShareUser, pw);
@@ -178,6 +204,66 @@ public static class Shared
     [DllImport("advapi32.dll", EntryPoint = "CredWriteW", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern bool CredWrite(ref Credential credential, int flags);
 
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct NetResource
+    {
+        public int Scope, Type, DisplayType, Usage;
+        public string? LocalName;
+        public string RemoteName;
+        public string? Comment, Provider;
+    }
+
+    [DllImport("mpr.dll", EntryPoint = "WNetAddConnection2W", CharSet = CharSet.Unicode)]
+    private static extern int WNetAddConnection2(ref NetResource resource, string password, string user, int flags);
+
+    [DllImport("mpr.dll", EntryPoint = "WNetCancelConnection2W", CharSet = CharSet.Unicode)]
+    private static extern int WNetCancelConnection2(string name, int flags, bool force);
+
+    /// <summary>Opens the share with this account now (what "net use" does), so a wrong password or an unreachable
+    /// server is reported as such instead of the folder just looking missing.</summary>
+    private static void ConnectWindows(string unc, string user, string password)
+    {
+        var r = new NetResource { Type = 1, RemoteName = unc };  // RESOURCETYPE_DISK
+        int err = WNetAddConnection2(ref r, password, user, 0);
+        if (err == 1219)
+        {
+            // ERROR_SESSION_CREDENTIAL_CONFLICT: Windows already talks to this server under another login; drop it once
+            WNetCancelConnection2(unc, 0, true);
+            err = WNetAddConnection2(ref r, password, user, 0);
+        }
+
+        if (err is not (0 or 85))  // 85: already connected
+        {
+            throw new InvalidOperationException($"Windows could not open {unc} as {user}: {new System.ComponentModel.Win32Exception(err).Message} (error {err}).");
+        }
+    }
+
+    [DllImport("advapi32.dll", EntryPoint = "CredReadW", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool CredRead(string target, int type, int flags, out IntPtr credential);
+
+    [DllImport("advapi32.dll")]
+    private static extern void CredFree(IntPtr buffer);
+
+    private static string GenericTarget(string host, string user) => $"Asset Shelf: {user}@{host}";
+
+    private static string? ReadWindowsPassword(string host, string user)
+    {
+        if (!CredRead(GenericTarget(host, user), 1, 0, out IntPtr p))
+        {
+            return null;
+        }
+
+        try
+        {
+            var c = Marshal.PtrToStructure<Credential>(p);
+            return Marshal.PtrToStringUni(c.CredentialBlob, c.CredentialBlobSize / 2);
+        }
+        finally
+        {
+            CredFree(p);
+        }
+    }
+
     private static void SaveWindowsCredential(string host, string user, string password)
     {
         byte[] blob = Encoding.Unicode.GetBytes(password);
@@ -187,7 +273,10 @@ public static class Shared
             Marshal.Copy(blob, 0, p, blob.Length);
             // CRED_TYPE_DOMAIN_PASSWORD (2) is what Windows file sharing looks up; CRED_PERSIST_ENTERPRISE (3) keeps it
             var c = new Credential { Type = 2, TargetName = host, UserName = user, CredentialBlob = p, CredentialBlobSize = blob.Length, Persist = 3 };
-            if (!CredWrite(ref c, 0))
+            // a domain password cannot be read back, so the same password also goes in a generic entry (CRED_TYPE_GENERIC,
+            // 1) that Asset Shelf reads at start to connect again
+            var g = new Credential { Type = 1, TargetName = GenericTarget(host, user), UserName = user, CredentialBlob = p, CredentialBlobSize = blob.Length, Persist = 3 };
+            if (!CredWrite(ref c, 0) || !CredWrite(ref g, 0))
             {
                 throw new InvalidOperationException($"Windows did not save the password (error {Marshal.GetLastWin32Error()}).");
             }
