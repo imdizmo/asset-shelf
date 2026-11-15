@@ -89,13 +89,13 @@ public static class Theme
     public static readonly IBrush FocusRing = Hex("#EC8219");
 
     /// <summary>The scrollbar thumb (scrollbar-thumb).</summary>
-    public static readonly IBrush ScrollbarThumb = Hex("#2A2A30");
+    public static readonly IBrush ScrollbarThumb = Tokens.ScrollThumb;
 
     /// <summary>The scrollbar thumb under the pointer.</summary>
-    public static readonly IBrush ScrollbarThumbHover = Hex("#3A3A42");
+    public static readonly IBrush ScrollbarThumbHover = Tokens.ScrollThumbHover;
 
     /// <summary>The background of chrome drawn over the 3D view (overlay-bg).</summary>
-    public static readonly IBrush OverlayBg = Rgba(24, 25, 27, .8);
+    public static readonly IBrush OverlayBg = Tokens.Overlay;
 
     /// <summary>The border of chrome drawn over the 3D view.</summary>
     public static readonly IBrush OverlayBorder = Rgba(255, 255, 255, .11);
@@ -143,25 +143,28 @@ public static class Theme
     public const double Space6 = 36;
 
     /// <summary>The smallest corner radius.</summary>
-    public const double Radius1 = 6;
+    public const double Radius1 = Tokens.RXs;
 
     /// <summary>The usual control corner radius.</summary>
-    public const double Radius2 = 8;
+    public const double Radius2 = Tokens.RSm;
 
     /// <summary>The radius of popovers and the search button.</summary>
-    public const double Radius3 = 11;
+    public const double Radius3 = Tokens.RMd;
 
     /// <summary>The radius of dialogs.</summary>
-    public const double Radius4 = 16;
+    public const double Radius4 = Tokens.RLg;
 
     /// <summary>A radius that makes any control a pill.</summary>
+    /// <summary>The largest radius (dialogs, big cards).</summary>
+    public const double Radius5 = Tokens.RXl;
+
     public const double RadiusPill = 999;
 
     /// <summary>Space Grotesk, jatify.com's typeface (SIL OFL, app/Assets/Fonts).</summary>
     public static readonly FontFamily Font = new("avares://AssetShelf/Assets/Fonts#Space Grotesk");
 
     /// <summary>Height of the top bar.</summary>
-    public const double MenuBarHeight = 36;
+    public const double MenuBarHeight = Tokens.TopBar;
 
     /// <summary>Height of the status bar.</summary>
     public const double StatusBarHeight = 24;
@@ -170,7 +173,7 @@ public static class Theme
     public const double RowHeight = 28;
 
     /// <summary>Height of a button, field or menu title.</summary>
-    public const double ControlHeight = 26;
+    public const double ControlHeight = Tokens.Control;
 
     /// <summary>Body text size.</summary>
     public const double Body = 13;

@@ -451,7 +451,7 @@ public sealed class PacksView
 
         var link = new Button
         {
-            Content = new TextBlock { Text = $"Its {Assets(p.AssetCount)} in the Assets view  ›", FontSize = Look.Theme.Label, FontWeight = FontWeight.SemiBold, Foreground = Look.Theme.AccentText },
+            Content = Look.Chrome.LinkText($"Its {Assets(p.AssetCount)} in the Assets view  ›", Look.Theme.Label, wrap: false, weight: FontWeight.SemiBold),
             Padding = new Thickness(4, 2),
             Margin = new Thickness(-4, 0, 0, 0),
             MinHeight = 0,

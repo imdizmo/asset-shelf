@@ -1,4 +1,5 @@
 // Adapted from easy-props (MIT, © 2026 AHS12).
+using Avalonia.Media;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Layout;
@@ -45,7 +46,7 @@ public static class Chrome
     public static Button IconTextButton(string icon, string text, string tooltip) =>
         Make(IconAndText(icon, text), tooltip, "ep", "ep-raised");
 
-    /// <summary>The call-to-action button (Export, say): moss green with white text.</summary>
+    /// <summary>The call-to-action button (one per screen): accent fill with accent-ink text.</summary>
     /// <param name="icon">The lucide icon name.</param>
     /// <param name="text">The label.</param>
     /// <param name="tooltip">The tooltip.</param>
@@ -120,5 +121,15 @@ public static class Chrome
 
         Tip(b, tooltip);
         return b;
+    }
+
+    /// <summary>Link text (design v2): text with a line-strong underline that turns accent on hover, not orange text.</summary>
+    public static TextBlock LinkText(string text, double size, bool wrap = true, FontWeight weight = FontWeight.Normal)
+    {
+        var line = new TextDecoration { Location = TextDecorationLocation.Underline, Stroke = Tokens.LineStrong, StrokeThickness = 1, StrokeOffset = 2, StrokeOffsetUnit = TextDecorationUnit.Pixel };
+        var t = new TextBlock { Text = text, FontSize = size, FontWeight = weight, Foreground = Tokens.Text, TextWrapping = wrap ? TextWrapping.Wrap : TextWrapping.NoWrap, TextDecorations = [line] };
+        t.PointerEntered += (_, _) => { t.Foreground = Tokens.Accent; line.Stroke = Tokens.Accent; };
+        t.PointerExited += (_, _) => { t.Foreground = Tokens.Text; line.Stroke = Tokens.LineStrong; };
+        return t;
     }
 }

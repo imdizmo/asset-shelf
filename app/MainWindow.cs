@@ -44,7 +44,7 @@ public sealed class MainWindow : Window
     private readonly HashSet<string> _packOff = [];
     private readonly HashSet<string> _licenceOff = [];
     private readonly HashSet<string> _tagOn = new(StringComparer.OrdinalIgnoreCase);
-    private readonly WrapPanel _tabs = new() { ItemSpacing = 2, LineSpacing = 2 };  // wraps when narrow: a scrollbar here covered the tabs
+    private readonly TabStrip _tabs = new();  // never wraps: what does not fit goes into More
     private readonly ListBox _grid = new();
     private readonly StackPanel _details = new();
     private readonly TextBlock _status = new() { FontSize = Look.Theme.Caption, Foreground = Look.Theme.TextSecondary, VerticalAlignment = VerticalAlignment.Center };
@@ -77,15 +77,26 @@ public sealed class MainWindow : Window
     private bool _packsMode;
     private readonly ProgressBar _progress = new()
     {
-        Width = 180,
+        Width = 80,
         Height = 4,
         MinHeight = 4,
-        Margin = new Thickness(12, 0, 0, 0),
+        MinWidth = 0,
         VerticalAlignment = VerticalAlignment.Center,
         Foreground = Look.Theme.Accent,
         Background = Look.Theme.SurfaceRaised,
         IsVisible = false,
     };
+
+    private readonly TextBlock _progressText = new() { FontSize = Look.Theme.Caption, Foreground = Look.Tokens.Mute, VerticalAlignment = VerticalAlignment.Center };
+    private StackPanel? _progressRowPanel;
+
+    // "Reading 12 of 687" and an 80 px bar, at the left of the status bar's counters
+    private StackPanel _progressRow => _progressRowPanel ??= new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center, Children = { _progressText, _progress } };
+
+    // the split send button: the main half sends to the last-used target, the menu half picks another
+    private readonly Button _sendMain = Chrome.PrimaryButton("download", "Send to Unreal", "Send the picked asset to the last-used target.");
+    private readonly Button _sendMenu = Chrome.PrimaryButton("chevron-down", "", "Send to another target.");
+    private static readonly (string Target, string Icon, string? Keys)[] SendTargets = [("Unreal", "download", "Ctrl+Shift+U"), ("Blender", "send", null), ("Unity", "box", null), ("Groundwork", "trees", null)];
 
     public MainWindow(Settings settings, Library lib)
     {
@@ -148,6 +159,13 @@ public sealed class MainWindow : Window
             if (e.KeyModifiers == KeyModifiers.Alt && e.Key is Key.Left or Key.Right)
             {
                 Step(e.Key == Key.Left ? -1 : 1);
+                e.Handled = true;
+                return;
+            }
+
+            if (e.KeyModifiers == (KeyModifiers.Control | KeyModifiers.Shift) && e.Key == Key.U && _toUnreal.IsEnabled && !_packsMode)
+            {
+                _toUnreal.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
                 e.Handled = true;
                 return;
             }
@@ -245,15 +263,21 @@ public sealed class MainWindow : Window
     }
 
     // The bar in the status line: a fraction from 0 to 1, or null for "busy, length unknown"; hidden when done.
-    private void Busy(double? fraction)
+    private void Busy(double? fraction, string? label = null)
     {
+        _progressText.Text = label ?? "";
+        _progressText.IsVisible = label is not null;
         _progress.IsVisible = true;
         _progress.IsIndeterminate = fraction is null;
         _progress.Maximum = 1;
         _progress.Value = fraction ?? 0;
     }
 
-    private void Idle() => _progress.IsVisible = false;
+    private void Idle()
+    {
+        _progress.IsVisible = false;
+        _progressText.IsVisible = false;
+    }
 
     // ---- layout ----
 
@@ -314,31 +338,28 @@ public sealed class MainWindow : Window
 
         var left = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
         left.Children.Add(brand);
-        left.Children.Add(new Border { Width = 6 });
+        left.Children.Add(new TextBlock { Text = "Asset Shelf", FontSize = Look.Theme.Body, FontWeight = FontWeight.SemiBold, Foreground = Look.Theme.TextPrimary, Margin = new Thickness(6, 0, 10, 0), VerticalAlignment = VerticalAlignment.Center });
         left.Children.Add(file);
         left.Children.Add(view);
         left.Children.Add(help);
-        left.Children.Add(new TextBlock { Text = "Asset Shelf", FontSize = Look.Theme.Body, FontWeight = FontWeight.SemiBold, Foreground = Look.Theme.TextPrimary, Margin = new Thickness(16, 0, 8, 0), VerticalAlignment = VerticalAlignment.Center });
-        left.Children.Add(_assetsTab);
-        left.Children.Add(_packsTabTop);
-        left.Children.Add(new Border { Width = 10 });
-        left.Children.Add(_libraryCaption);
+        left.Children.Add(new Border { Width = 1, Height = 18, Background = Look.Tokens.Line, Margin = new Thickness(8, 0), VerticalAlignment = VerticalAlignment.Center });
+        left.Children.Add(new Segmented(_assetsTab, _packsTabTop));
         _assetsTab.IsChecked = true;
         _assetsTab.Click += (_, _) => SetMode(packs: false);
         _packsTabTop.Click += (_, _) => SetMode(packs: true);
 
-        _search.Width = 380;
-        _search.HorizontalAlignment = HorizontalAlignment.Center;
+        _search.MaxWidth = 380;
+        _search.MinWidth = 160;
+        _search.Margin = new Thickness(12, 0);
+        _search.HorizontalAlignment = HorizontalAlignment.Stretch;
         _search.VerticalAlignment = VerticalAlignment.Center;
         _search.Background = Look.Theme.SurfacePanel;
 
         var right = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 0, 8, 0) };
-        right.Children.Add(_toUnity);
-        right.Children.Add(_toGroundwork);
-        right.Children.Add(_toBlender);
-        right.Children.Add(_toUnreal);
+        right.Children.Add(SendButton());
 
-        var bar = new Grid { Background = Look.Theme.SurfacePage, ColumnDefinitions = new ColumnDefinitions("*,Auto,*") };
+        // the search takes what the menus and the send button leave (380 at most, 160 at least): nothing overlaps at 1024
+        var bar = new Grid { Background = Look.Tokens.Panel, ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto") };
         bar.Children.Add(new Border { Child = left, Padding = new Thickness(Look.Theme.Space2, 0, 0, 0) });
         Grid.SetColumn(_search, 1);
         bar.Children.Add(_search);
@@ -404,13 +425,32 @@ public sealed class MainWindow : Window
         _middle.Content = middle;
 
         _rightScroll.Content = _details;
+        // the inspector: 240 to 520 wide, dragged by its left edge, the width kept in the settings
+        var grip = new Border { Width = 5, Background = Brushes.Transparent, HorizontalAlignment = HorizontalAlignment.Left, Cursor = new Cursor(StandardCursorType.SizeWestEast) };
         var rightPanel = new Border
         {
-            Width = 330,
+            Width = Math.Clamp(_settings.InspectorWidth, Look.Tokens.PanelMin, Look.Tokens.PanelMax),
             Background = Look.Theme.SurfacePanel,
             BorderBrush = Look.Theme.BorderSubtle,
             BorderThickness = new Thickness(1, 0, 0, 0),
-            Child = _rightScroll,
+            Child = new Panel { Children = { _rightScroll, grip } },
+        };
+        double? dragFrom = null;
+        double widthFrom = 0;
+        grip.PointerPressed += (_, e) => { dragFrom = e.GetPosition(this).X; widthFrom = rightPanel.Width; e.Pointer.Capture(grip); };
+        grip.PointerMoved += (_, e) =>
+        {
+            if (dragFrom is { } from)
+            {
+                rightPanel.Width = Math.Clamp(widthFrom - (e.GetPosition(this).X - from), Look.Tokens.PanelMin, Look.Tokens.PanelMax);
+            }
+        };
+        grip.PointerReleased += (_, e) =>
+        {
+            dragFrom = null;
+            e.Pointer.Capture(null);
+            _settings.InspectorWidth = rightPanel.Width;
+            _settings.Save();
         };
         _rightPanel = rightPanel;
         _leftPanel = leftPanel;
@@ -427,14 +467,21 @@ public sealed class MainWindow : Window
     private Control StatusBar()
     {
         var dock = new DockPanel { Margin = new Thickness(10, 0, 4, 0) };
-        var right = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 14, VerticalAlignment = VerticalAlignment.Center };
+        // the right side never shrinks; the message on the left ellipsizes first (full text in its tooltip)
+        var right = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 16, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 0, 0, 0) };
+        right.Children.Add(_progressRow);
         right.Children.Add(_counts);
+        right.Children.Add(_libraryCaption);
         right.Children.Add(_projectButton);
         DockPanel.SetDock(right, Dock.Right);
         dock.Children.Add(right);
-        var left = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center, Children = { _status, _progress } };
+        _status.TextTrimming = TextTrimming.CharacterEllipsis;
+        _status[!ToolTip.TipProperty] = _status[!TextBlock.TextProperty];
+        var dot = new Avalonia.Controls.Shapes.Ellipse { Width = 6, Height = 6, Fill = Look.Tokens.Success, Margin = new Thickness(0, 0, 8, 0), VerticalAlignment = VerticalAlignment.Center };
+        var left = new DockPanel { VerticalAlignment = VerticalAlignment.Center, Children = { dot, _status } };
+        DockPanel.SetDock(dot, Dock.Left);
         dock.Children.Add(left);
-        return new Border { Child = dock, Background = Look.Theme.SurfacePage, BorderBrush = Look.Theme.BorderSubtle, BorderThickness = new Thickness(0, 1, 0, 0) };
+        return new Border { Child = dock, Background = Look.Tokens.Panel, BorderBrush = Look.Theme.BorderSubtle, BorderThickness = new Thickness(0, 1, 0, 0) };
     }
 
     // ---- filters ----
@@ -450,7 +497,7 @@ public sealed class MainWindow : Window
 
         _reloading = true;
         _status.Text = "Reading the library…";
-        var progress = new Progress<(int Done, int Total)>(p => Busy(p.Total == 0 ? null : (double)p.Done / p.Total));
+        var progress = new Progress<(int Done, int Total)>(p => Busy(p.Total == 0 ? null : (double)p.Done / p.Total, p.Total == 0 ? null : $"Reading {p.Done:N0} of {p.Total:N0}"));
         try
         {
             using (Log.Time("library", "reload (Ctrl+R)"))
@@ -650,6 +697,7 @@ public sealed class MainWindow : Window
         _toUnreal.IsVisible = !packs;
         _toBlender.IsVisible = !packs;
         _toGroundwork.IsVisible = !packs;
+        _sendBox!.IsVisible = !packs;
         _search.Box.PlaceholderText = packs ? "Search packs, sellers, tags…" : "Search assets, packs, tags…";
         Refresh();
     }
@@ -672,13 +720,14 @@ public sealed class MainWindow : Window
             .OrderBy(i => Array.IndexOf(Library.Kinds, i.Kind)).ThenBy(i => i.Pack.Title, StringComparer.OrdinalIgnoreCase)
             .ThenBy(i => i.Name, StringComparer.OrdinalIgnoreCase).ToList();
 
-        _tabs.Children.Clear();
         int allCount = pool.Count(i => Library.DefaultKinds.Contains(i.Kind));
-        _tabs.Children.Add(MakeTab("All", allCount, null, "Meshes, characters, animations, effects, sounds, blueprints and maps. Materials, textures and the rest have their own tabs."));
+        var tabs = new List<UnderlineTab> { MakeTab("All", allCount, null, "Meshes, characters, animations, effects, sounds, blueprints and maps. Materials, textures and the rest have their own tabs.") };
         foreach (var (kind, plural) in TabKinds)
         {
-            _tabs.Children.Add(MakeTab(plural, perKind.GetValueOrDefault(kind), kind, $"Only {plural.ToLowerInvariant()}."));
+            tabs.Add(MakeTab(plural, perKind.GetValueOrDefault(kind), kind, $"Only {plural.ToLowerInvariant()}."));
         }
+
+        _tabs.SetTabs(tabs);
 
         _activeTags.Children.Clear();
         Pack? only = _lib.Packs.Count > 1 && _packOff.Count == _lib.Packs.Count - 1 ? _lib.Packs.FirstOrDefault(p => !_packOff.Contains(p.Id)) : null;
@@ -712,9 +761,9 @@ public sealed class MainWindow : Window
         Record();
     }
 
-    private Tab MakeTab(string name, int count, string? kind, string tip)
+    private UnderlineTab MakeTab(string name, int count, string? kind, string tip)
     {
-        var tab = new Tab($"{name} {count:N0}", tip) { IsChecked = _kind == kind };
+        var tab = new UnderlineTab(name, count.ToString("N0"), tip) { IsChecked = _kind == kind };
         tab.Click += (_, _) =>
         {
             _kind = kind;
@@ -851,7 +900,7 @@ public sealed class MainWindow : Window
             Content = content,
         };
         b.Classes.Add("ep");
-        b.Classes.Add(on ? "ep-raised" : "ep-outline");
+        b.Classes.Add(on ? "chip-on" : "chip");
         Chrome.Tip(b, tip);
         b.Click += (_, _) =>
         {
@@ -867,9 +916,9 @@ public sealed class MainWindow : Window
 
     private double TileW => _tileW;
 
-    private double Side => _tileW - 18;  // the picture inside a tile
+    private double Side => _tileW - 10;  // the picture inside a tile
 
-    private double TileH => Side + 46;
+    private double TileH => Side + 58;
 
     // As many tiles of the chosen picture size as fit, then stretched to fill the row.
     private void Relayout(double width)
@@ -930,7 +979,8 @@ public sealed class MainWindow : Window
             inner = img;
         }
 
-        Control picture = new Border { Width = Side, Height = Side, CornerRadius = new CornerRadius(Look.Theme.Radius2), ClipToBounds = true, Background = Look.Theme.SurfaceSunken, Child = inner };
+        var frame = new Border { Width = Side, Height = Side, CornerRadius = new CornerRadius(Look.Tokens.RSm), ClipToBounds = true, Background = Look.Theme.SurfaceSunken, Child = inner, BorderThickness = new Thickness(2), BorderBrush = Brushes.Transparent };
+        Control picture = frame;
         if (!item.Raw && _inProject.Contains(item.Package))
         {
             var badge = new Border
@@ -948,28 +998,40 @@ public sealed class MainWindow : Window
             picture = new Panel { Width = Side, Height = Side, Children = { picture, badge } };
         }
 
-        var name = new TextBlock { Text = item.Name, FontSize = 11, Foreground = Look.Theme.TextPrimary, TextTrimming = TextTrimming.CharacterEllipsis, TextAlignment = TextAlignment.Center, MaxWidth = Side };
+        // caption 12/600 on two lines then an ellipsis, kind line 11.5 muted (design v2 asset tile)
+        var name = new TextBlock { Text = item.Name, FontSize = Look.Tokens.FsLabel, FontWeight = FontWeight.SemiBold, Foreground = Look.Tokens.Text, TextWrapping = TextWrapping.Wrap, TextTrimming = TextTrimming.CharacterEllipsis, MaxLines = 2, Height = 32, Margin = new Thickness(0, 6, 0, 0), MaxWidth = Side };
         string sub = item.Raw ? $"{item.Kind} · {Path.GetExtension(item.Path).TrimStart('.').ToUpperInvariant()}" : item.Kind;
-        var kind = new TextBlock { Text = sub, FontSize = 10, Foreground = Look.Theme.TextTertiary, TextAlignment = TextAlignment.Center };
+        var kind = new TextBlock { Text = sub, FontSize = Look.Tokens.FsCaption, Foreground = Look.Tokens.Mute, TextTrimming = TextTrimming.CharacterEllipsis, MaxWidth = Side };
         var border = new Border
         {
             Width = TileW,
             Height = TileH,
-            Margin = new Thickness(2),
-            Padding = new Thickness(7, 7, 7, 4),
-            CornerRadius = new CornerRadius(6),
-            BorderThickness = new Thickness(2),
-            BorderBrush = item == _picked || _selected.Contains(item) ? Look.Theme.Selection : Brushes.Transparent,
-            Background = Look.Theme.SurfacePanel,
-            Child = new StackPanel { Spacing = 3, Children = { picture, name, kind } },
+            Margin = new Thickness(4),
+            Padding = new Thickness(4, 4, 4, 8),
+            CornerRadius = new CornerRadius(Look.Tokens.RMd),
+            BorderThickness = new Thickness(1),
+            Child = new StackPanel { Children = { picture, name, kind } },
             Cursor = new Cursor(StandardCursorType.Hand),
+            Tag = frame,
         };
+        PaintTile(border, item == _picked || _selected.Contains(item));
         Chrome.Tip(border, $"{item.Name}\n{item.Class} · {ShortTitle(item.Pack.Title)}");
-        border.PointerEntered += (_, _) => border.Background = Look.Theme.SurfaceRaised;
-        border.PointerExited += (_, _) => border.Background = Look.Theme.SurfacePanel;
+        border.PointerEntered += (_, _) => { if (border.BorderBrush != Look.Tokens.AccentLine) border.Background = Look.Tokens.Hover; };
+        border.PointerExited += (_, _) => { if (border.BorderBrush != Look.Tokens.AccentLine) border.Background = Brushes.Transparent; };
         border.PointerPressed += (_, e) => Click(item, e.KeyModifiers);
         _tileOf[item] = border;
         return border;
+    }
+
+    /// <summary>A tile at rest has no fill; selected: the selected wash, an accent-line border and a 2 px accent ring on the picture.</summary>
+    private static void PaintTile(Border tile, bool selected)
+    {
+        tile.Background = selected ? Look.Tokens.Selected : Brushes.Transparent;
+        tile.BorderBrush = selected ? Look.Tokens.AccentLine : Brushes.Transparent;
+        if (tile.Tag is Border frame)
+        {
+            frame.BorderBrush = selected ? Look.Tokens.Accent : Brushes.Transparent;
+        }
     }
 
     private static string KindIcon(string kind) => kind switch
@@ -1282,12 +1344,77 @@ public sealed class MainWindow : Window
     /// <summary>The assets a send acts on: the selection, or the picked one.</summary>
     private List<Item> Targets() => _selected.Count > 1 ? [.. _shown.Where(_selected.Contains)] : _picked is { } p ? [p] : [];
 
+    private Border? _sendBox;
+
+    private Button Target(string t) => t switch { "Blender" => _toBlender, "Unity" => _toUnity, "Groundwork" => _toGroundwork, _ => _toUnreal };
+
+    private Control SendButton()
+    {
+        _sendMain.Classes.Add("split-main");
+        _sendMenu.Classes.Add("split-menu");
+        _sendMenu.Width = 24;
+        _sendMenu.Padding = new Thickness(0);
+        _sendMenu.BorderThickness = new Thickness(1, 0, 0, 0);
+        _sendMain.Click += (_, _) =>
+        {
+            if (Target(_settings.LastSend) is { IsEnabled: true } b)
+            {
+                b.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+            }
+        };
+        _sendMenu.Click += (_, _) =>
+        {
+            int n = Targets().Count;
+            var menu = new MenuFlyout { Placement = PlacementMode.BottomEdgeAlignedRight };
+            foreach (var (t, icon, keys) in SendTargets)
+            {
+                var item = new MenuItem
+                {
+                    Header = n > 1 ? $"Send {n} to {t}" : $"Send to {t}",
+                    Icon = new Icon(icon, 16),
+                    InputGesture = keys is null ? null : KeyGesture.Parse(keys),
+                    IsEnabled = Target(t).IsEnabled,
+                    FontSize = Look.Theme.Label,
+                };
+                item.Click += (_, _) =>
+                {
+                    _settings.LastSend = t;
+                    _settings.Save();
+                    UpdateSend();
+                    Target(t).RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+                };
+                menu.Items.Add(item);
+            }
+
+            menu.ShowAt(_sendMenu);
+        };
+        UpdateSend();
+        return _sendBox = new Border
+        {
+            CornerRadius = new CornerRadius(Look.Tokens.RSm),
+            ClipToBounds = true,
+            VerticalAlignment = VerticalAlignment.Center,
+            Child = new StackPanel { Orientation = Orientation.Horizontal, Children = { _sendMain, _sendMenu } },
+        };
+    }
+
+    /// <summary>The main half's label, icon and enabled state follow the last-used target and the selection.</summary>
+    private void UpdateSend()
+    {
+        string t = SendTargets.Any(x => x.Target == _settings.LastSend) ? _settings.LastSend : "Unreal";
+        int n = Targets().Count;
+        _sendMain.Content = Chrome.IconAndText(SendTargets.First(x => x.Target == t).Icon, n > 1 ? $"Send {n} to {t}" : $"Send to {t}");
+        _sendMain.IsEnabled = Target(t).IsEnabled;
+    }
+
     private void Highlight()
     {
         foreach (var (it, b) in _tileOf)
         {
-            b.BorderBrush = it == _picked || _selected.Contains(it) ? Look.Theme.Selection : Brushes.Transparent;
+            PaintTile(b, it == _picked || _selected.Contains(it));
         }
+
+        UpdateSend();
 
         int n = Targets().Count;
         _toUnreal.Content = Chrome.IconAndText("download", n > 1 ? $"Send {n} to Unreal" : "Send to Unreal");
@@ -1306,6 +1433,7 @@ public sealed class MainWindow : Window
         _toBlender.IsEnabled = item is not null && (item.Raw || item.Kind is "Mesh" or "Character" or "Animation");
         _toUnity.IsEnabled = item is not null && (item.Raw || item.Kind is "Mesh" or "Character");
         _toGroundwork.IsEnabled = item is not null && (item.Raw || item.Kind == "Mesh");
+        UpdateSend();
         if (item is null)
         {
             _details.Children.Add(new TextBlock
@@ -1395,7 +1523,7 @@ public sealed class MainWindow : Window
         Pack pack = item.Pack;
         var packLink = new Button
         {
-            Content = new TextBlock { Text = ShortTitle(pack.Title), FontSize = Look.Theme.Label, Foreground = Look.Theme.AccentText, TextWrapping = TextWrapping.Wrap },
+            Content = Chrome.LinkText(ShortTitle(pack.Title), Look.Theme.Label),
             Padding = new Thickness(4, 2),
             Margin = new Thickness(-4, 0, 0, 0),
             MinHeight = 0,
@@ -1419,7 +1547,7 @@ public sealed class MainWindow : Window
             {
                 var link = new Button
                 {
-                    Content = new TextBlock { Text = ShortTitle(t.Pack.Title), FontSize = Look.Theme.Label, Foreground = Look.Theme.AccentText, TextWrapping = TextWrapping.Wrap },
+                    Content = Chrome.LinkText(ShortTitle(t.Pack.Title), Look.Theme.Label),
                     Padding = new Thickness(4, 1),
                     Margin = new Thickness(-4, 0, 0, 0),
                     MinHeight = 0,
@@ -1483,7 +1611,10 @@ public sealed class MainWindow : Window
             }
         }
 
-        about.Body.Children.Add(new SelectableTextBlock { Text = item.Path, FontSize = 10.5, Foreground = Look.Theme.TextTertiary, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(2, 6, 0, 0) });
+        // design v2 path line: read-only, mono, one line; trims from the start so the file name stays (full path in the tooltip)
+        var path = new SelectableTextBlock { Text = item.Path, FontSize = Look.Tokens.FsCaption, FontFamily = new FontFamily("DejaVu Sans Mono, Consolas, Menlo, monospace"), Foreground = Look.Tokens.Dim, TextWrapping = TextWrapping.NoWrap, TextTrimming = TextTrimming.PrefixCharacterEllipsis };
+        Chrome.Tip(path, item.Path);
+        about.Body.Children.Add(new Border { Background = Look.Tokens.Bg, CornerRadius = new CornerRadius(Look.Tokens.RXs), Padding = new Thickness(6, 4), Margin = new Thickness(0, 6, 0, 0), Child = path });
         // pack.json is data from disk: only ever open a web address from it, never a file or another scheme
         if (Uri.TryCreate(item.Pack.Url, UriKind.Absolute, out Uri? url) && (url.Scheme == Uri.UriSchemeHttps || url.Scheme == Uri.UriSchemeHttp))
         {
@@ -1574,7 +1705,10 @@ public sealed class MainWindow : Window
 
     internal static Grid InfoRow(string label, Control v)
     {
-        var g = new Grid { ColumnDefinitions = new ColumnDefinitions("100,*"), MinHeight = Look.Theme.RowHeight - 4 };
+        // design v2 key/value table: the label column 40% (at least 88), values wrap
+        var g = new Grid { MinHeight = Look.Theme.RowHeight - 4 };
+        g.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(4, GridUnitType.Star)) { MinWidth = Look.Tokens.LabelMin });
+        g.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(6, GridUnitType.Star)));
         g.Children.Add(new TextBlock { Text = label, FontSize = Look.Theme.Label, Foreground = Look.Theme.TextSecondary, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(2, 0, 0, 0) });
         v.VerticalAlignment = VerticalAlignment.Center;
         Grid.SetColumn(v, 1);
