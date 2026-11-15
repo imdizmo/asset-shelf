@@ -10,6 +10,12 @@ public sealed class Settings
     public string Index { get; set; } = "";
     public string UnrealProject { get; set; } = "";
 
+    /// <summary>The split Send button's main target: Unreal, Blender, Unity or Groundwork (the last one used).</summary>
+    public string LastSend { get; set; } = "Unreal";
+
+    /// <summary>The inspector's width (240 to 520).</summary>
+    public double InspectorWidth { get; set; } = 320;
+
     /// <summary>The Unreal Engine folder that exports assets; empty: found (see <see cref="UnrealSetup"/>).</summary>
     public string UnrealEngine { get; set; } = "";
 
