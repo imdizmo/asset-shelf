@@ -10,6 +10,9 @@ public sealed class Settings
     public string Index { get; set; } = "";
     public string UnrealProject { get; set; } = "";
 
+    /// <summary>The Unreal Engine folder that exports assets; empty: found (see <see cref="UnrealSetup"/>).</summary>
+    public string UnrealEngine { get; set; } = "";
+
     /// <summary>A library shared from a file server (\\server\share\folder) and the account used there; empty: a local
     /// folder. See <see cref="Shared"/>.</summary>
     public string Share { get; set; } = "";

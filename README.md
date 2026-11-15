@@ -37,7 +37,7 @@ Status: 0.1, used daily on Linux; Windows and macOS are untested.
 Releases have packages for Linux (x64: an `.AppImage`, or a `.tar.gz`) and Windows (x64, `.zip`). The AppImage is one
 file: make it executable and run it (an AppImage launcher such as Gear Lever adds it to the app menu). The archives
 unpack anywhere; run `AssetShelf` (`AssetShelf.exe`), and on Linux `./install-desktop-entry.sh` adds it to the app menu
-with its icon (run it again after moving the folder; `--remove` takes it out). .NET is included. Blender, Python and
+with its icon (run it again after moving the folder; `--remove` takes it out). .NET and Python are included. Blender, Python and
 Unreal are found on the `PATH` or set in `settings.json` (`Blender`). Windows builds are made by the same CI but not yet tested on Windows; reports are welcome.
 
 To make a release: push a tag such as `v0.2.0` (`.github/workflows/release.yml` builds the packages with
@@ -49,9 +49,9 @@ To make a release: push a tag such as `v0.2.0` (`.github/workflows/release.yml` 
 |---|---|
 | The app | nothing for a release package; the .NET 10 SDK to build from source |
 | Indexing Unreal packs | nothing more (ShelfIndex, .NET) |
-| Exporting Unreal assets to Blender/Unity | Unreal Engine 5 (`~/UnrealEngine` or set `--engine`) |
+| Exporting Unreal assets to Blender/Unity/Groundwork | Unreal Engine 5.8 or later. On Windows the app offers to install it through Epic's launcher (installing the launcher too) when none is found; elsewhere put it in `~/UnrealEngine` or set `UnrealEngine` in the settings |
 | Loose files, materials, turntables, Unity prep | Blender 5.1 or later on the `PATH` |
-| Fab and itch.io sync | Python 3.11+ and `secret-tool` (libsecret); the first sync offers to set up its packages (legendary-gl, requests) in `~/.local/share/asset-shelf/venv` |
+| Fab and itch.io sync | `secret-tool` (libsecret) on Linux; the first sync offers to set up its packages (legendary-gl, requests) in `~/.local/share/asset-shelf/venv` |
 | Unity | a Unity project (tested with Unity 6; glTF models are not handled yet) |
 
 ## Setup

@@ -129,7 +129,7 @@ public static class Sender
 
     /// <summary>Exports an Unreal asset to FBX (with its textures as PNG) through the tools' headless editor.</summary>
     /// <returns>The export folder and the FBX files in it.</returns>
-    public static async Task<(string Dir, List<string> Fbx)> ExportAsync(Item item, Settings settings)
+    public static async Task<(string Dir, List<string> Fbx)> ExportAsync(Item item, Settings settings, string engine)
     {
         string outDir = CacheDir(Path.Combine(Path.GetDirectoryName(Outbox())!, "exports"), item);
         // the asset and every package it needs: only these are copied out of the pack, so Unreal scans a handful of files
@@ -147,7 +147,7 @@ public static class Sender
         })).ConfigureAwait(false);
         var psi = new ProcessStartInfo(Run.Python(settings))
         {
-            ArgumentList = { "-I", "-u", Path.Combine(settings.Tools, "export_fbx.py"), "--job", jobFile },
+            ArgumentList = { "-I", "-u", Path.Combine(settings.Tools, "export_fbx.py"), "--engine", engine, "--job", jobFile },
             RedirectStandardOutput = true,
             RedirectStandardError = true,
         };
@@ -186,9 +186,9 @@ public static class Sender
     }
 
     /// <summary>Exports an Unreal asset to FBX and hands it to the open Blender.</summary>
-    public static async Task<string> UnrealToBlenderAsync(Item item, Settings settings)
+    public static async Task<string> UnrealToBlenderAsync(Item item, Settings settings, string engine)
     {
-        var (dir, fbx) = await ExportAsync(item, settings).ConfigureAwait(false);
+        var (dir, fbx) = await ExportAsync(item, settings, engine).ConfigureAwait(false);
         ToBlender(item.Name, fbx, dir, unreal: true);
         return dir;
     }

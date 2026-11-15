@@ -42,8 +42,9 @@ public static class Run
     public static string Python(Settings s) =>
         new[] { VenvPython(Path.Combine(s.Tools, ".venv")), VenvPython(SyncVenv) }.FirstOrDefault(File.Exists) ?? BasePython;
 
-    /// <summary>The system's Python, used to make <see cref="SyncVenv"/>.</summary>
-    public static string BasePython => OperatingSystem.IsWindows() ? "python" : "python3";
+    /// <summary>The Python shipped in a release (python/ beside the app), else the system's; also makes <see cref="SyncVenv"/>.</summary>
+    public static string BasePython => Path.Combine(AppContext.BaseDirectory, "python", OperatingSystem.IsWindows() ? "python.exe" : Path.Combine("bin", "python3")) is var b && File.Exists(b)
+        ? b : OperatingSystem.IsWindows() ? "python" : "python3";
 
     /// <summary>Where the app sets up the sync tools' Python packages: under the user's data folder, since a release's
     /// tools/ may be read-only (an AppImage).</summary>

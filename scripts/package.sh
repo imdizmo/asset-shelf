@@ -23,6 +23,23 @@ cp -r "$root/unreal/AssetShelf" "$stage/unreal/"
 rm -rf "$stage/unreal/AssetShelf/Binaries" "$stage/unreal/AssetShelf/Intermediate"
 cp "$root/README.md" "$root/LICENSE" "$root/NOTICE.md" "$stage/"
 [[ "$rid" == linux-* ]] && cp "$root/scripts/install-desktop-entry.sh" "$stage/"
+# A standalone CPython (python-build-standalone, pinned and SHA-256 checked) goes in python/, so the tools need no
+# Python on the user's system; the app uses it before any other.
+pycache="${PYTHON_CACHE:-$HOME/.cache/asset-shelf/python}"
+mkdir -p "$pycache"
+case "$rid" in
+    win-x64) py=cpython-3.13.18+20261026-x86_64-pc-windows-msvc-install_only_stripped.tar.gz
+             pysum=7369f7a35f261222a6ac8b3a87c1c88eeebee8af945d85346202591a64038dd3 ;;
+    linux-x64) py=cpython-3.13.18+20261026-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz
+               pysum=df15fe60d3ff55bf9dcf25824b5572756bb8816ff93865a273d3301d7066a8b7 ;;
+    *) echo "no bundled Python for $rid" >&2; exit 2 ;;
+esac
+if ! echo "$pysum  $pycache/$py" | sha256sum -c --status 2>/dev/null; then
+    curl -fsSL --retry 3 -o "$pycache/$py.part" "https://github.com/astral-sh/python-build-standalone/releases/download/20261026/${py/+/%2B}"
+    echo "$pysum  $pycache/$py.part" | sha256sum -c --quiet
+    mv "$pycache/$py.part" "$pycache/$py"
+fi
+tar -xzf "$pycache/$py" -C "$stage"  # unpacks as python/
 cd "$out"
 if [[ "$rid" == win-* ]]; then
     rm -f "$name.zip"; (command -v zip >/dev/null && zip -qr "$name.zip" "$name") || python3 -c "import shutil,sys; shutil.make_archive(sys.argv[1], 'zip', '.', sys.argv[1])" "$name"

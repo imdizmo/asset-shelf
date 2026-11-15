@@ -108,9 +108,21 @@ def trim_cache(root, keep):
             total -= size
 
 
+def default_engine():
+    """$UNREAL_ENGINE, else ~/UnrealEngine (a source build), else the newest launcher install (Epic Games/UE_5.x)."""
+    if os.environ.get('UNREAL_ENGINE'):
+        return os.environ['UNREAL_ENGINE']
+    home = os.path.expanduser('~/UnrealEngine')
+    if os.path.isdir(home):
+        return home
+    roots = [os.path.join(os.environ.get(v, ''), 'Epic Games') for v in ('ProgramFiles', 'ProgramW6432')] 
+    found = [os.path.join(r, d) for r in roots if os.path.isdir(r) for d in os.listdir(r) if re.fullmatch(r'UE_5\.\d+', d)]
+    return max(found, key=lambda p: int(p.rsplit('.', 1)[1]), default=home)
+
+
 def main():
     a = argparse.ArgumentParser()
-    a.add_argument('--engine', default=os.path.expanduser('~/UnrealEngine'))
+    a.add_argument('--engine', default=default_engine())
     a.add_argument('--host', default=os.path.expanduser('~/.cache/asset-shelf/export-host'))
     a.add_argument('--job', required=True)
     o = a.parse_args()

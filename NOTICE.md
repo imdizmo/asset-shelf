@@ -36,6 +36,13 @@ https://github.com/AHS12/easy-props
 `tools/ShelfIndex` uses CUE4Parse (https://github.com/FabianFG/CUE4Parse) as a NuGet package, under the Apache
 License 2.0 (https://www.apache.org/licenses/LICENSE-2.0). Asset Shelf does not modify it.
 
+## Python
+
+Release packages include CPython 3.13 in `python/` (a python-build-standalone build,
+https://github.com/astral-sh/python-build-standalone), under the Python Software Foundation License and the
+licences of the libraries it bundles; their texts are in `python/LICENSE.txt` and beside the libraries. Asset Shelf
+does not modify it.
+
 ## Space Grotesk
 
 `app/Assets/Fonts/` holds Space Grotesk (© 2020 The Space Grotesk Project Authors), under the SIL Open Font

@@ -1684,7 +1684,7 @@ public sealed class MainWindow : Window
             }
             else
             {
-                var (dir, fbx) = await Sender.ExportAsync(item, _settings);
+                var (dir, fbx) = await Sender.ExportAsync(item, _settings, await UnrealSetup.EnsureAsync(this, _settings));
                 frames = await Turntable.FramesAsync(item, fbx, dir, unreal: true, blenderDir, _settings);
             }
 
@@ -1722,7 +1722,7 @@ public sealed class MainWindow : Window
             {
                 _status.Text = $"{item.Name}: exporting through Unreal (about 20 seconds)…";
                 Busy(null);
-                var (dir, fbx) = await Sender.ExportAsync(item, _settings);
+                var (dir, fbx) = await Sender.ExportAsync(item, _settings, await UnrealSetup.EnsureAsync(this, _settings));
                 Sender.OpenInBlender(item.Name, fbx, dir, blenderDir, _settings, unreal: true);
             }
 
@@ -1762,7 +1762,7 @@ public sealed class MainWindow : Window
                 else
                 {
                     _status.Text = $"{item.Name}: exporting through Unreal{(targets.Count > 1 ? $" ({sent + 1} of {targets.Count})" : "")}…";
-                    await Sender.UnrealToBlenderAsync(item, _settings);
+                    await Sender.UnrealToBlenderAsync(item, _settings, await UnrealSetup.EnsureAsync(this, _settings));
                 }
 
                 sent++;
@@ -1810,7 +1810,7 @@ public sealed class MainWindow : Window
                 else
                 {
                     _status.Text = $"{item.Name}: exporting through Unreal{(targets.Count > 1 ? $" ({parts.Count + 1} of {targets.Count})" : "")}…";
-                    var (dir, fbx) = await Sender.ExportAsync(item, _settings);
+                    var (dir, fbx) = await Sender.ExportAsync(item, _settings, await UnrealSetup.EnsureAsync(this, _settings));
                     parts.Add(new(item, fbx, dir, true));
                 }
             }
@@ -2022,7 +2022,7 @@ public sealed class MainWindow : Window
                 }
                 else
                 {
-                    var (dir, fbx) = await Sender.ExportAsync(item, _settings);
+                    var (dir, fbx) = await Sender.ExportAsync(item, _settings, await UnrealSetup.EnsureAsync(this, _settings));
                     lines.Add(await UnitySender.SendAsync(item, fbx, dir, unreal: true, _settings, blenderDir));
                 }
 
