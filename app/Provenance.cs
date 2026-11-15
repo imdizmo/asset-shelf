@@ -183,7 +183,9 @@ public sealed class Provenance
         Directory.CreateDirectory(dir);
         string stem = Path.GetFileNameWithoutExtension(sidecar);
         string? main = null;
-        foreach (string f in Directory.EnumerateFiles(Path.GetDirectoryName(sidecar)!, stem + ".*"))
+        // the files that share the sidecar's name exactly (no pattern built from a file name; links skipped)
+        foreach (string f in Directory.EnumerateFiles(Path.GetDirectoryName(sidecar)!)
+                     .Where(f => Path.GetFileNameWithoutExtension(f).Equals(stem, StringComparison.Ordinal) && new FileInfo(f).LinkTarget is null))
         {
             string to = Path.Combine(dir, Path.GetFileName(f));
             File.Move(f, to, false);
