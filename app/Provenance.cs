@@ -175,8 +175,8 @@ public sealed class Provenance
         return list;
     }
 
-    /// <summary>Moves an inbox receipt (its sidecar and every file with the same name) into the pack's
-    /// provenance/receipts/ and records it.</summary>
+    /// <summary>Copies an inbox receipt (its sidecar and every file with the same name) into the pack's
+    /// provenance/receipts/ and records it. The inbox keeps it: one order (a bundle) can cover several packs.</summary>
     public void AttachFromInbox(string indexDir, string sidecar, Receipt data)
     {
         string dir = Path.Combine(indexDir, "provenance", "receipts");
@@ -188,7 +188,7 @@ public sealed class Provenance
                      .Where(f => Path.GetFileNameWithoutExtension(f).Equals(stem, StringComparison.Ordinal) && new FileInfo(f).LinkTarget is null))
         {
             string to = Path.Combine(dir, Path.GetFileName(f));
-            File.Move(f, to, false);
+            File.Copy(f, to, true);
             if (!f.Equals(sidecar, StringComparison.Ordinal) && main is null)
             {
                 main = to;

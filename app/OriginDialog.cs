@@ -78,13 +78,12 @@ public sealed class OriginDialog : Window
             FontSize = Look.Theme.Label,
             HorizontalAlignment = HorizontalAlignment.Stretch,
         };
-        Button attach = Chrome.TextButton("Attach", "Move this receipt from the inbox into the pack.");
+        Button attach = Chrome.TextButton("Attach", "Copy this receipt into the pack (it stays in the inbox: one order can cover several packs).");
         attach.Click += (_, _) =>
         {
             if (inboxPick.SelectedIndex is int i and >= 0 && i < inbox.Count)
             {
                 p.AttachFromInbox(pack.IndexDir, inbox[i].Sidecar, inbox[i].Receipt);
-                inboxPick.IsEnabled = false;
                 Persist();
                 Show();
             }
