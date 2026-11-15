@@ -1,7 +1,7 @@
 {
 	"FileVersion": 3,
 	"Version": 1,
-	"VersionName": "0.1.4",
+	"VersionName": "0.1.5",
 	"FriendlyName": "Asset Shelf",
 	"Description": "Indexes asset packs (types, dependencies, preview pictures) for the Asset Shelf browser and brings picked assets into the open project.",
 	"Category": "Editor",
