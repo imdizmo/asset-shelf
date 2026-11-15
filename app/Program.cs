@@ -44,7 +44,11 @@ public sealed class App : Application
             splash.Show();
             var progress = new Progress<(int Done, int Total)>(p =>
                 splash.Show($"Reading packs  {p.Done:N0} of {p.Total:N0}", p.Total == 0 ? null : 0.9 * p.Done / p.Total));
-            _ = Task.Run(() => Library.Load(settings.Packs, settings.Index, progress)).ContinueWith(t =>
+            _ = Task.Run(() =>
+            {
+                Shared.Reconnect(settings);
+                return Library.Load(settings.Packs, settings.Index, progress);
+            }).ContinueWith(t =>
             {
                 splash.Show("Building the grid", 0.95);
                 // let the splash draw that line before the main window takes the UI thread

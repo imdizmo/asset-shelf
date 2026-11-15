@@ -50,8 +50,10 @@ public sealed class MainWindow : Window
     private readonly TextBlock _status = new() { FontSize = Look.Theme.Caption, Foreground = Look.Theme.TextSecondary, VerticalAlignment = VerticalAlignment.Center };
     private readonly TextBlock _counts = new() { FontSize = Look.Theme.Caption, Foreground = Look.Theme.TextTertiary, VerticalAlignment = VerticalAlignment.Center };
     private readonly Button _projectButton = Chrome.TextButton("", "The Unreal project assets are sent to. Click to pick another.");
+    private Button _fileMenu = null!;
     private readonly TextBlock _libraryCaption = new() { FontSize = Look.Theme.Caption, Foreground = Look.Theme.TextTertiary, VerticalAlignment = VerticalAlignment.Center };
     private readonly Button _toUnity = Chrome.IconTextButton("box", "Send to Unity", "Copy the picked asset into the Unity project with its textures and materials for the project's render pipeline.");
+    private readonly Button _toGroundwork = Chrome.IconTextButton("trees", "Send to Groundwork", "Turn the picked meshes into .glb files and hand them to the open Groundwork map (through its inbox).");
     private readonly Button _toBlender = Chrome.IconTextButton("send", "Send to Blender", "Import the picked asset into the open Blender (the Asset Shelf Bridge add-on picks it up).");
     private readonly Button _toUnreal = Chrome.PrimaryButton("download", "Send to Unreal", "Copy the picked asset and everything it needs into the Unreal project's Content folder.");
     private readonly DispatcherTimer _searchDelay = new() { Interval = TimeSpan.FromMilliseconds(180) };
@@ -138,6 +140,7 @@ public sealed class MainWindow : Window
             GroupActions();
         };
         _toBlender.Click += async (_, _) => await SendToBlenderAsync();
+        _toGroundwork.Click += async (_, _) => await SendToGroundworkAsync();
         _toUnity.Click += async (_, _) => await SendToUnityAsync();
         _toUnreal.Click += async (_, _) => await SendToUnrealAsync();
         KeyDown += (_, e) =>
@@ -284,8 +287,9 @@ public sealed class MainWindow : Window
         Chrome.Tip(brand, "Show everything: clear the search, the tags and the kind tab.");
         brand.Click += (_, _) => ClearFilters();
 
-        Button file = Menu("File", "Reload the library, pick the Unreal project, quit.",
+        Button file = _fileMenu = Menu("File", "Reload the library, pick the Unreal project, quit.",
             ("Reload library", "Ctrl+R", () => _ = ReloadAsync()),
+            ("Connect to a shared library…", null, () => _ = ConnectAsync()),
             ("Unreal project…", null, () => _ = PickProjectAsync()),
             ("Sign in to Epic…", null, () => _ = SignInAsync()),
             ("Sync Fab library…", null, () => _ = SyncAsync()),
@@ -330,6 +334,7 @@ public sealed class MainWindow : Window
 
         var right = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 0, 8, 0) };
         right.Children.Add(_toUnity);
+        right.Children.Add(_toGroundwork);
         right.Children.Add(_toBlender);
         right.Children.Add(_toUnreal);
 
@@ -450,7 +455,11 @@ public sealed class MainWindow : Window
         {
             using (Log.Time("library", "reload (Ctrl+R)"))
             {
-                _lib = await Task.Run(() => Library.Load(_settings.Packs, _settings.Index, progress));
+                _lib = await Task.Run(() =>
+                {
+                    Shared.Reconnect(_settings);
+                    return Library.Load(_settings.Packs, _settings.Index, progress);
+                });
             }
         }
         finally
@@ -465,7 +474,15 @@ public sealed class MainWindow : Window
     private void UseLibrary()
     {
         _libraryCaption.Text = $"{_lib.Items.Count:N0} assets · {_lib.Packs.Count} packs ({_lib.Packs.Count(p => p.Indexed)} indexed)";
-        _status.Text = _lib.Packs.Count == 0 ? $"No indexes in {_settings.Index}" : "Ready";
+        // member mode: a library this user cannot change (a share they only read) is synced and indexed by its owner
+        bool member = !Shared.Writable(_settings.Index);
+
+        foreach (MenuItem mi in ((MenuFlyout)_fileMenu.Flyout!).Items.OfType<MenuItem>().Where(m => m.Header is string h && (h.StartsWith("Sync", StringComparison.Ordinal) || h.StartsWith("Sign in", StringComparison.Ordinal))))
+        {
+            mi.IsVisible = !member;
+        }
+
+        _status.Text = _lib.Packs.Count == 0 ? $"No indexes in {_settings.Index}" : member ? "Ready · a shared library, read-only: its owner syncs it" : "Ready";
         _picked = null;
         _history.Clear();  // places point at the old library's objects
         _at = -1;
@@ -632,6 +649,7 @@ public sealed class MainWindow : Window
         _rightPanel.Width = packs ? 660 : 330;
         _toUnreal.IsVisible = !packs;
         _toBlender.IsVisible = !packs;
+        _toGroundwork.IsVisible = !packs;
         _search.Box.PlaceholderText = packs ? "Search packs, sellers, tags…" : "Search assets, packs, tags…";
         Refresh();
     }
@@ -1274,6 +1292,7 @@ public sealed class MainWindow : Window
         int n = Targets().Count;
         _toUnreal.Content = Chrome.IconAndText("download", n > 1 ? $"Send {n} to Unreal" : "Send to Unreal");
         _toBlender.Content = Chrome.IconAndText("send", n > 1 ? $"Send {n} to Blender" : "Send to Blender");
+        _toGroundwork.Content = Chrome.IconAndText("trees", n > 1 ? $"Send {n} to Groundwork" : "Send to Groundwork");
     }
 
     // ---- details ----
@@ -1286,6 +1305,7 @@ public sealed class MainWindow : Window
         _toUnreal.IsEnabled = item is { Raw: false };
         _toBlender.IsEnabled = item is not null && (item.Raw || item.Kind is "Mesh" or "Character" or "Animation");
         _toUnity.IsEnabled = item is not null && (item.Raw || item.Kind is "Mesh" or "Character");
+        _toGroundwork.IsEnabled = item is not null && (item.Raw || item.Kind == "Mesh");
         if (item is null)
         {
             _details.Children.Add(new TextBlock
@@ -1765,6 +1785,59 @@ public sealed class MainWindow : Window
         }
     }
 
+    private async Task SendToGroundworkAsync()
+    {
+        List<Item> targets = [.. Targets().Where(t => t.Raw || t.Kind == "Mesh").Take(GroundworkSender.MaxFiles)];
+        if (targets.Count == 0)
+        {
+            _status.Text = "Send to Groundwork takes meshes";
+            return;
+        }
+
+        string blenderDir = Path.Combine(Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(_settings.Tools))!, "blender");
+        _toGroundwork.IsEnabled = false;
+        Busy(targets.Count > 1 ? 0 : null);
+        try
+        {
+            var parts = new List<GroundworkSender.Part>();
+            foreach (Item item in targets)
+            {
+                if (item.Raw)
+                {
+                    var (file, tex) = RawFile(item);
+                    parts.Add(new(item, [file], tex, false));
+                }
+                else
+                {
+                    _status.Text = $"{item.Name}: exporting through Unreal{(targets.Count > 1 ? $" ({parts.Count + 1} of {targets.Count})" : "")}…";
+                    var (dir, fbx) = await Sender.ExportAsync(item, _settings);
+                    parts.Add(new(item, fbx, dir, true));
+                }
+            }
+
+            string id = await GroundworkSender.DeliverAsync(parts, blenderDir, _settings, i => Dispatcher.UIThread.Post(() =>
+            {
+                _status.Text = $"{parts[i].Item.Name}: to .glb for Groundwork{(parts.Count > 1 ? $" ({i + 1} of {parts.Count})" : "")}…";
+                if (parts.Count > 1)
+                {
+                    Busy((double)i / parts.Count);
+                }
+            }));
+            string what = targets.Count > 1 ? $"{targets.Count} assets" : targets[0].Name;
+            _status.Text = $"{what}: sent to Groundwork, waiting for its answer…";
+            _status.Text = $"{what}: {await GroundworkSender.AnswerAsync(id, TimeSpan.FromSeconds(6))}";
+        }
+        catch (Exception e) when (e is InvalidOperationException or IOException or UnauthorizedAccessException)
+        {
+            _status.Text = $"Groundwork: {e.Message}";
+        }
+        finally
+        {
+            Idle();
+            _toGroundwork.IsEnabled = true;
+        }
+    }
+
     // ---- Fab library sync (tools/fab_sync.py) ----
 
     private bool _syncing;
@@ -1978,6 +2051,29 @@ public sealed class MainWindow : Window
         text.FontSize = Look.Theme.Caption;
         text.Text = _settings.UnrealProject.Length == 0 ? "No Unreal project: pick one" : $"Unreal: {Path.GetFileName(_settings.UnrealProject.TrimEnd('/'))}";
         Chrome.Tip(_projectButton, (_settings.UnrealProject.Length == 0 ? "" : _settings.UnrealProject + "\n") + "Click to pick the Unreal project assets are sent to.");
+    }
+
+    private async Task ConnectAsync()
+    {
+        if (await ConnectDialog.Ask(this, _settings.Share, _settings.ShareUser) is not var (address, user, password))
+        {
+            return;
+        }
+
+        _status.Text = $"Connecting to {address}…";
+        try
+        {
+            string root = await Task.Run(() => Shared.Connect(address, user, password));
+            (_settings.Share, _settings.ShareUser) = (address, user);
+            (_settings.Packs, _settings.Index) = (Path.Combine(root, "packs"), Path.Combine(root, "index"));
+            _settings.Save();
+            Log.Write("shared", $"connected to {address} as {user}: {root}");
+            await ReloadAsync();
+        }
+        catch (InvalidOperationException e)
+        {
+            _status.Text = e.Message;
+        }
     }
 
     private async Task<bool> PickProjectAsync()

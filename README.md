@@ -24,6 +24,9 @@ Status: 0.1, used daily on Linux; Windows and macOS are untested.
   materials wired: base colour, normal (DirectX for Unreal assets), roughness, metallic, packed ORM maps, emission.
 - **Send to Unity.** The model, the textures its materials use, and Unity materials for the project's pipeline (URP,
   HDRP or Built-in), with the import settings written so normal maps and data maps come in right.
+- **Send to Groundwork.** Meshes become self-contained .glb files (textures embedded, capped at 2048 px; origin at the
+  base, metres, Y up) delivered to Groundwork's inbox (`~/.local/share/Groundwork/inbox`, `%LOCALAPPDATA%\Groundwork\inbox`
+  on Windows); the open map takes them in, and the status bar shows Groundwork's answer.
 - **Spin in 3D.** A turntable rendered once by headless Blender, turned by dragging.
 - **Library sync.** Fab (sign in with your Epic account) and itch.io (an API key): what is new or updated, downloaded
   and checked file by file, then indexed. A preview first; nothing is downloaded until you say so.
@@ -77,6 +80,15 @@ Settings live in `~/.config/asset-shelf/settings.json` (most are also in the Fil
 ```
 
 Run with `dotnet run --project app -c Release` (add `--debug` to open the log on start).
+
+### Sharing a library with a team
+
+Put the library folder (holding `packs/` and `index/`) on a file server (SMB, such as a NAS) and give each team member
+an account there with read-only access to it. Each member uses File > Connect to a shared library… with
+`\\server\share\folder`, a user name and a password. The password is kept by the system (Windows Credential
+Manager; on Linux the keyring, and the share is mounted with GNOME's gvfs-smb). A library the user cannot write to
+opens in member mode: Sync and sign-in are hidden, so only the owner syncs and indexes it. The connection is kept as
+`Share` and `ShareUser` in the settings.
 
 ## Library layout
 

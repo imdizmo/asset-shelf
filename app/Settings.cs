@@ -10,6 +10,12 @@ public sealed class Settings
     public string Index { get; set; } = "";
     public string UnrealProject { get; set; } = "";
 
+    /// <summary>A library shared from a file server (\\server\share\folder) and the account used there; empty: a local
+    /// folder. See <see cref="Shared"/>.</summary>
+    public string Share { get; set; } = "";
+
+    public string ShareUser { get; set; } = "";
+
     /// <summary>The tools/ folder beside the app (a release) or above the build output (the repo). Found on every start
     /// and never saved: an AppImage runs from a mount point that changes each time, and a "Tools" entry an older version
     /// saved in settings.json could point at an old copy.</summary>
