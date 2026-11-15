@@ -227,7 +227,7 @@ public static class UnrealSetup
             // launcher version ignores it for the engine, the hint says where the button is
             Process.Start(new ProcessStartInfo($"com.epicgames.launcher://apps/{AppName}?action=install") { UseShellExecute = true })?.Dispose();
             var sw = Stopwatch.StartNew();
-            // installs listed outside Program Files before this one started are not taken (the user can have said no to them)
+            // installs listed outside Program Files before this one started are not offered again (the user can have said no to them)
             HashSet<string> before = new(ListedElsewhere(), StringComparer.OrdinalIgnoreCase);
             while (true)
             {
@@ -238,9 +238,17 @@ public static class UnrealSetup
                     return engine;
                 }
 
+                // a new install outside Program Files: most likely the folder the user just picked, but the list it comes
+                // from can be edited by other accounts, so it is asked about too
                 if (Usable(ListedElsewhere().Where(p => !before.Contains(p))) is { } installed)
                 {
-                    return Keep(s, installed);  // the folder the user just picked in the launcher
+                    if (await Dispatcher.UIThread.InvokeAsync(() => Prompt.Confirm(this, "Use this Unreal Engine?",
+                            $"Unreal Engine 5.{Minor(installed)} is now installed at {installed}. Is that the folder you chose in Epic's launcher? Use it to export assets?", "Use it")))
+                    {
+                        return Keep(s, installed);
+                    }
+
+                    before.Add(installed);
                 }
 
                 await Task.Delay(TimeSpan.FromSeconds(10), stop).ConfigureAwait(false);
