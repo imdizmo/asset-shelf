@@ -129,6 +129,10 @@ Run heavy ones under a memory cap, for example `systemd-run --user --scope -p Me
   projects use; your own token is kept in the system keyring.
 - **itch.io sync** uses itch.io's public API with your API key, also kept in the keyring.
 
+## Contributing
+
+Contributions are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## License
 
 MIT, see `LICENSE`. Third-party parts and their licences are listed in `NOTICE.md`.
