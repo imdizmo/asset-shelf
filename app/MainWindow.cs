@@ -40,6 +40,11 @@ public sealed class MainWindow : Window
     private readonly FoldGroup _tagsGroup = new("Tags");
     private readonly FoldGroup _packsGroup = new("Packs", open: false);
     private readonly FoldGroup _licenceGroup = new("Licence");
+    private readonly FoldGroup _originGroup = new("Origin");
+    private readonly HashSet<string> _originOn = [];  // unknown, licence, receipt: show only packs with that gap
+
+    // per pack: (no source page, no saved licence copy, no receipt), worked out once (file checks on the share)
+    private readonly Dictionary<string, (bool Unknown, bool Licence, bool Receipt)> _originOf = [];
     private readonly WrapPanel _activeTags = new() { Margin = new Thickness(8, 8, 8, 2) };
     private readonly HashSet<string> _packOff = [];
     private readonly HashSet<string> _licenceOff = [];
@@ -400,7 +405,7 @@ public sealed class MainWindow : Window
                 },
             },
         };
-        var filters = new StackPanel { Children = { leftHead, _activeTags, _keepGroup, _tagsGroup, _licenceGroup, _packsGroup } };
+        var filters = new StackPanel { Children = { leftHead, _activeTags, _keepGroup, _tagsGroup, _licenceGroup, _originGroup, _packsGroup } };
         var leftPanel = new Border
         {
             Width = 270,
@@ -520,9 +525,12 @@ public sealed class MainWindow : Window
 
     private void UseLibrary()
     {
+        _originOf.Clear();
+        _packsView.OriginFlag = p => OriginOf(p) switch { { Unknown: true } => "Unknown origin", { Licence: true } => "Licence not saved", _ => p.Provenance is { Acquired.How: "bought", Receipts.Count: 0 } ? "No receipt" : null };
         _libraryCaption.Text = $"{_lib.Items.Count:N0} assets · {_lib.Packs.Count} packs ({_lib.Packs.Count(p => p.Indexed)} indexed)";
         // member mode: a library this user cannot change (a share they only read) is synced and indexed by its owner
         bool member = !Shared.Writable(_settings.Index);
+        _member = member;
 
         foreach (MenuItem mi in ((MenuFlyout)_fileMenu.Flyout!).Items.OfType<MenuItem>().Where(m => m.Header is string h && (h.StartsWith("Sync", StringComparison.Ordinal) || h.StartsWith("Sign in", StringComparison.Ordinal))))
         {
@@ -680,7 +688,7 @@ public sealed class MainWindow : Window
     private IEnumerable<Item> Pool()
     {
         string[] words = (_search.Box.Text ?? "").ToLowerInvariant().Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        return _lib.Items.Where(i => !_packOff.Contains(i.Pack.Id) && !_licenceOff.Contains(LicenceOf(i.Pack))
+        return _lib.Items.Where(i => !_packOff.Contains(i.Pack.Id) && !_licenceOff.Contains(LicenceOf(i.Pack)) && OriginMatch(i.Pack)
             && _tagOn.All(t => i.Tags.Contains(t)) && words.All(w => i.SearchText.Contains(w, StringComparison.Ordinal))
             && (_collection is null || (_keep.Members(_collection)?.Contains(Collections.Key(i)) ?? false)));
     }
@@ -816,6 +824,22 @@ public sealed class MainWindow : Window
         {
             _licenceGroup.Body.Children.Add(new CheckRow(lic, n == 1 ? "1 pack" : $"{n} packs", !_licenceOff.Contains(lic), $"Packs under {lic}.", on => Toggle(_licenceOff, lic, !on)));
         }
+
+        // Origin: the gaps in where packs came from; ticking one shows only the packs with it
+        _originGroup.Body.Children.Clear();
+        var indexed = _lib.Packs.Where(p => p.Indexed).ToList();
+        foreach (var (key, label, tip, test) in new (string, string, string, Func<(bool Unknown, bool Licence, bool Receipt), bool>)[]
+                 {
+                     ("unknown", "Unknown origin", "Packs with no source page recorded: nothing says where they came from.", o => o.Unknown),
+                     ("licence", "Licence not saved", "Packs with no saved copy of their licence text.", o => o.Licence),
+                     ("receipt", "No receipt", "Packs with no receipt on file (free packs have none).", o => o.Receipt),
+                 })
+        {
+            int n = indexed.Count(p => test(OriginOf(p)));
+            _originGroup.Body.Children.Add(new CheckRow(label, n == 1 ? "1 pack" : $"{n} packs", _originOn.Contains(key), tip, on => Toggle(_originOn, key, on)));
+        }
+
+        _originGroup.Count = indexed.Count(p => OriginOf(p) is { Unknown: true } or { Licence: true }).ToString();
     }
 
     /// <summary>Each filter group's "unselect" action, worded for what it would do now.</summary>
@@ -874,6 +898,28 @@ public sealed class MainWindow : Window
         }
 
         Refresh();
+    }
+
+    private (bool Unknown, bool Licence, bool Receipt) OriginOf(Pack p)
+    {
+        if (!_originOf.TryGetValue(p.Id, out var o))
+        {
+            o = (Provenance.UnknownOrigin(p.Provenance), Provenance.LicenceNotSaved(p.Provenance, p.IndexDir, LibraryRoot), Provenance.NoReceipt(p.Provenance));
+            _originOf[p.Id] = o;
+        }
+
+        return o;
+    }
+
+    private bool OriginMatch(Pack p)
+    {
+        if (_originOn.Count == 0)
+        {
+            return true;
+        }
+
+        var o = OriginOf(p);
+        return (_originOn.Contains("unknown") && o.Unknown) || (_originOn.Contains("licence") && o.Licence) || (_originOn.Contains("receipt") && o.Receipt);
     }
 
     private static string LicenceOf(Pack p) => p.Licence.Length == 0 ? "Unknown" : p.Licence.Split(':')[0];
@@ -1549,10 +1595,7 @@ public sealed class MainWindow : Window
         Chrome.Tip(packLink, $"Show only {ShortTitle(pack.Title)}'s assets.");
         packLink.Click += (_, _) => OnlyPack(pack);
         about.Body.Children.Add(InfoRow("Pack", packLink));
-        if (item.Pack.Licence.Length > 0)
-        {
-            about.Body.Children.Add(InfoRow("Licence", item.Pack.Licence));
-        }
+        AddOrigin(about, item.Pack);
 
         if (item.Twins.Count > 0)
         {
@@ -1714,6 +1757,130 @@ public sealed class MainWindow : Window
         _ => v,
     };
 
+    private bool _member;
+
+    /// <summary>Adds a line per sent asset (asset, pack, source, licence, acquired) to the project's
+    /// AssetShelf.provenance.jsonl, so a project can list what it uses and credit it. Asks once per project, showing
+    /// the path; the answer is kept in the settings.</summary>
+    private async Task RecordSentAsync(IReadOnlyList<Item> items, string project, string target)
+    {
+        if (items.Count == 0 || project.Length == 0)
+        {
+            return;
+        }
+
+        string root = project.EndsWith(".uproject", StringComparison.OrdinalIgnoreCase) ? Path.GetDirectoryName(project)! : project.TrimEnd('/', '\\');
+        if (!Directory.Exists(root) || _settings.ProvenanceOff.Contains(root, StringComparer.Ordinal))
+        {
+            return;
+        }
+
+        string file = Path.Combine(root, "AssetShelf.provenance.jsonl");
+        if (!_settings.ProvenanceOn.Contains(root, StringComparer.Ordinal))
+        {
+            bool yes = await Prompt.Confirm(this, "Keep a list of what you send?",
+                $"Asset Shelf can add a line to {file} for each asset you send to this project: the asset, its pack, the source page, the licence and when it was acquired (no prices, receipts or accounts). It is what you need for credits and for showing where an asset came from.",
+                "Keep the list");
+            (yes ? _settings.ProvenanceOn : _settings.ProvenanceOff).Add(root);
+            _settings.Save();
+            if (!yes)
+            {
+                return;
+            }
+        }
+
+        try
+        {
+            await File.AppendAllLinesAsync(file, items.Select(i => Provenance.Line(i, i.Pack.Provenance, target)));
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            Log.Write("provenance", $"could not add to {file}: {e.Message}");
+        }
+    }
+
+    /// <summary>The library folder holding packs/ and index/ (where the shared licences/ and receipts/ live).</summary>
+    private string LibraryRoot => Path.GetDirectoryName(_settings.Index.TrimEnd('/', '\\')) ?? _settings.Index;
+
+    /// <summary>Source, licence, acquired and receipt rows: where the pack came from and the right to use it. A pack
+    /// with no source page or no saved licence copy says so plainly; a missing receipt is only flagged when bought.</summary>
+    private void AddOrigin(FoldGroup about, Pack pack)
+    {
+        Provenance? p = pack.Provenance;
+        string url = p?.Source.Url is { Length: > 0 } u ? u : pack.Url;
+        if (Provenance.IsWebLink(url) && Uri.TryCreate(url, UriKind.Absolute, out Uri? link))
+        {
+            var open = new Button { Content = Chrome.LinkText(p?.Source.Site is { Length: > 0 } site ? site : link.Host, Look.Theme.Label), Padding = new Thickness(4, 1), Margin = new Thickness(-4, 0, 0, 0), MinHeight = 0, HorizontalAlignment = HorizontalAlignment.Left, Cursor = new Cursor(StandardCursorType.Hand) };
+            open.Classes.Add("ep");
+            open.Classes.Add("ep-text");
+            Chrome.Tip(open, link.AbsoluteUri);
+            open.Click += async (_, _) => await Launcher.LaunchUriAsync(link);
+            about.Body.Children.Add(InfoRow("Source", open));
+        }
+        else
+        {
+            about.Body.Children.Add(InfoRow("Source", Flag("Unknown origin", "No source page is recorded for this pack: nothing says where it came from.")));
+        }
+
+        string licence = p is { Licence.Name.Length: > 0 } ? string.Join(" ", new[] { p.Licence.Name, p.Licence.Tier }.Where(x => x.Length > 0)) : pack.Licence;
+        var lic = new StackPanel { Spacing = 2 };
+        lic.Children.Add(new TextBlock { Text = licence.Length > 0 ? licence : "Not stated", FontSize = Look.Theme.Label, Foreground = Look.Tokens.Text, TextWrapping = TextWrapping.Wrap });
+        lic.Children.Add(Provenance.LicenceNotSaved(p, pack.IndexDir, LibraryRoot)
+            ? Flag("Licence not saved", "No copy of the licence text is kept in the library. Store terms change and listings vanish: the copy is what shows the right to use it.")
+            : new TextBlock { Text = $"Copy saved {p!.Licence.Copies[^1].Saved}", FontSize = Look.Theme.Caption, Foreground = Look.Tokens.Mute });
+        about.Body.Children.Add(InfoRow("Licence", lic));
+
+        string how = p?.Acquired.How is { Length: > 0 } h ? h : "unknown";
+        string date = p?.Acquired.Date is { Length: > 0 } d ? d : pack.Acquired;
+        string acquired = how == "unknown" ? (date.Length > 0 ? $"{ShortDate(date)} (how not recorded)" : "Not recorded") : date.Length > 0 ? $"{Capital(how)}, {ShortDate(date)}" : Capital(how);
+        about.Body.Children.Add(InfoRow("Acquired", acquired));
+        if (p is { Receipts.Count: > 0 })
+        {
+            about.Body.Children.Add(InfoRow("Receipt", $"On file, {ShortDate(p.Receipts[^1].Date)}"));
+        }
+        else if (Provenance.BoughtWithoutReceipt(p))
+        {
+            about.Body.Children.Add(InfoRow("Receipt", Flag("No receipt on file", "This pack was bought: attach its receipt with Origin…")));
+        }
+
+        if (!_member)
+        {
+            Button edit = Chrome.TextButton("Origin…", "Record or fix where this pack came from, its licence text, how it was acquired and its receipt.");
+            edit.HorizontalAlignment = HorizontalAlignment.Left;
+            edit.Margin = new Thickness(-4, 2, 0, 0);
+            edit.Click += async (_, _) =>
+            {
+                if (await OriginDialog.Ask(this, pack, LibraryRoot))
+                {
+                    _originOf.Remove(pack.Id);
+                    FillPacksAndLicences();
+                    if (_picked is { } it) ShowDetails(it);
+                    Refresh();
+                }
+            };
+            about.Body.Children.Add(edit);
+        }
+    }
+
+    private static string ShortDate(string iso) => iso.Length >= 10 ? iso[..10] : iso;
+
+    private static string Capital(string s) => s.Length == 0 ? s : char.ToUpperInvariant(s[0]) + s[1..];
+
+    /// <summary>A warning chip: warning-soft pill, its text in the warning colour.</summary>
+    private static Control Flag(string text, string tip)
+    {
+        var chip = new Border
+        {
+            Background = Look.Tokens.WarningSoft,
+            CornerRadius = new CornerRadius(Look.Tokens.RPill),
+            Padding = new Thickness(8, 1),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            Child = new TextBlock { Text = text, FontSize = Look.Theme.Caption, FontWeight = FontWeight.SemiBold, Foreground = Look.Tokens.Warning },
+        };
+        Chrome.Tip(chip, tip);
+        return chip;
+    }
+
     internal static Grid InfoRow(string label, string value) =>
         InfoRow(label, new SelectableTextBlock { Text = value, FontSize = Look.Theme.Label, Foreground = Look.Theme.TextPrimary, TextWrapping = TextWrapping.Wrap });
 
@@ -1795,6 +1962,7 @@ public sealed class MainWindow : Window
             step.Then($"{label}: {copied} files copied, {plan.Already.Count} packages already there, {plan.Missing.Count} missing");
             _status.Text = $"{label}: {copied} files copied into {Path.GetFileName(project.TrimEnd('/'))}/Content, {plan.Already.Count} packages already there"
                 + (plan.Missing.Count > 0 ? $", {plan.Missing.Count} missing ({plan.Missing[0]})" : "");
+            await RecordSentAsync(targets, _settings.UnrealProject, "Unreal");
             _ = ScanProjectAsync();
         }
         catch (IOException e)
@@ -1905,12 +2073,12 @@ public sealed class MainWindow : Window
                 if (item.Raw)
                 {
                     var (file, texDir) = RawFile(item);
-                    Sender.ToBlender(item.Name, [file], texDir);
+                    Sender.ToBlender(item.Name, [file], texDir, provenance: Provenance.Line(item, item.Pack.Provenance, "Blender"));
                 }
                 else
                 {
                     _status.Text = $"{item.Name}: exporting through Unreal{(targets.Count > 1 ? $" ({sent + 1} of {targets.Count})" : "")}…";
-                    await Sender.UnrealToBlenderAsync(item, _settings, UnrealEngine);
+                    await Sender.UnrealToBlenderAsync(item, _settings, UnrealEngine, Provenance.Line(item, item.Pack.Provenance, "Blender"));
                 }
 
                 sent++;
@@ -2184,6 +2352,7 @@ public sealed class MainWindow : Window
             }
 
             _status.Text = targets.Count == 1 ? lines[0] : $"{lines.Count} assets sent to Unity ({Path.GetFileName(_settings.UnityProject.TrimEnd('/'))})";
+            await RecordSentAsync(targets, _settings.UnityProject, "Unity");
         }
         catch (Exception e) when (e is InvalidOperationException or IOException)
         {

@@ -255,6 +255,10 @@ def run_job(path):
         coll.objects.link(o)
         o.select_set(True)
     print('asset shelf: materials', link_textures(new, job.get('textures'), unreal=bool(job.get('unreal'))))
+    # where the asset came from (source, licence, acquired): kept in the .blend so it travels with the file
+    if isinstance(job.get('provenance'), str) and len(job['provenance']) < 4096:
+        text = bpy.data.texts.get('AssetShelf provenance') or bpy.data.texts.new('AssetShelf provenance')
+        text.write(job['provenance'].replace('\n', ' ') + '\n')
     if new:
         bpy.context.view_layer.objects.active = new[0]
     return name, len(new)

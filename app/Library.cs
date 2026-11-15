@@ -24,6 +24,9 @@ public sealed class Pack
     public IReadOnlyList<string> Tags { get; init; } = [];
     public required string FilesDir { get; init; }
     public required string IndexDir { get; init; }
+
+    /// <summary>Where the pack came from and its licence (index/&lt;pack&gt;/provenance.json); null when not recorded yet.</summary>
+    public Provenance? Provenance { get; set; }
     public Dictionary<string, Item> ByPackage { get; } = new(StringComparer.Ordinal);
 }
 
@@ -125,6 +128,7 @@ public sealed partial class Library
 
         string id = System.IO.Path.GetFileName(dir);
         Pack pack = ReadPack(dir, id, System.IO.Path.Combine(packsRoot, id));
+        pack.Provenance = Provenance.Load(dir);
         pack.Indexed = indexed;
         var items = new List<Item>();
         if (!indexed)

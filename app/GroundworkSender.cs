@@ -40,7 +40,7 @@ public static partial class GroundworkSender
 
                 string glb = Path.Combine(partial, model + ".glb");
                 await ToGlbAsync(part, glb, blenderDir, settings).ConfigureAwait(false);
-                kinds.Add(new { file = model + ".glb", model, label = Label(title), category = Category(part.Item) });
+                kinds.Add(new { file = model + ".glb", model, label = Label(title), category = Category(part.Item), provenance = JsonSerializer.Deserialize<JsonElement>(Provenance.Line(part.Item, part.Item.Pack.Provenance, "Groundwork")) });
             }
 
             await File.WriteAllTextAsync(Path.Combine(partial, "send.json"), JsonSerializer.Serialize(new { version = 1, source = "Asset Shelf", kinds })).ConfigureAwait(false);

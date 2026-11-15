@@ -16,6 +16,11 @@ public sealed class Settings
     /// <summary>The inspector's width (240 to 520).</summary>
     public double InspectorWidth { get; set; } = 320;
 
+    /// <summary>Projects that keep AssetShelf.provenance.jsonl (said yes), and those that said no.</summary>
+    public List<string> ProvenanceOn { get; set; } = [];
+
+    public List<string> ProvenanceOff { get; set; } = [];
+
     /// <summary>The Unreal Engine folder that exports assets; empty: found (see <see cref="UnrealSetup"/>).</summary>
     public string UnrealEngine { get; set; } = "";
 

@@ -118,12 +118,12 @@ public static class Sender
         : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".cache", "asset-shelf", "outbox");
 
     /// <summary>Drops a job for Blender: the files to import and where to look for loose textures.</summary>
-    public static void ToBlender(string name, IReadOnlyList<string> files, string? textureDir, bool unreal = false)
+    public static void ToBlender(string name, IReadOnlyList<string> files, string? textureDir, bool unreal = false, string? provenance = null)
     {
         string box = Outbox();
         Directory.CreateDirectory(box);
         string job = Path.Combine(box, $"{DateTime.Now:yyyyMMdd-HHmmss-fff}.json");
-        File.WriteAllText(job + ".part", JsonSerializer.Serialize(new { name, files, textures = textureDir, unreal }));
+        File.WriteAllText(job + ".part", JsonSerializer.Serialize(new { name, files, textures = textureDir, unreal, provenance }));
         File.Move(job + ".part", job);
     }
 
@@ -244,10 +244,10 @@ public static class Sender
     }
 
     /// <summary>Exports an Unreal asset to FBX and hands it to the open Blender.</summary>
-    public static async Task<string> UnrealToBlenderAsync(Item item, Settings settings, Func<Task<string>> engine)
+    public static async Task<string> UnrealToBlenderAsync(Item item, Settings settings, Func<Task<string>> engine, string? provenance = null)
     {
         var (dir, fbx) = await ExportAsync(item, settings, engine).ConfigureAwait(false);
-        ToBlender(item.Name, fbx, dir, unreal: true);
+        ToBlender(item.Name, fbx, dir, unreal: true, provenance: provenance);
         return dir;
     }
 

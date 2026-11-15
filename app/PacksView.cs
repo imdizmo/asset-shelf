@@ -30,6 +30,9 @@ public sealed class PacksView
     private double _cardW = CardMin;
     private int _perRow = 1;
 
+    /// <summary>A pack's origin gap to mark on its card ("Unknown origin", "Licence not saved"), or null; set by the window.</summary>
+    public Func<Pack, string?> OriginFlag { get; set; } = _ => null;
+
     public PacksView()
     {
         _grid.ItemTemplate = new FuncDataTemplate<Pack[]?>((row, _) => MakeRow(row), supportsRecycling: false);
@@ -208,7 +211,7 @@ public sealed class PacksView
             Thumbs.Bind(cover, p.Cover, 400);
         }
 
-        var picture = new Border
+        Control picture = new Border
         {
             Height = CoverH,
             CornerRadius = new CornerRadius(Look.Theme.Radius2),
@@ -216,6 +219,23 @@ public sealed class PacksView
             Background = Look.Theme.SurfaceSunken,
             Child = p.Cover is null ? new Look.Icon("box", 28) { Foreground = Look.Theme.TextTertiary, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center } : cover,
         };
+        if (OriginFlag(p) is { } flag)
+        {
+            // an undocumented pack never looks the same as a documented one
+            var chip = new Border
+            {
+                Background = Look.Tokens.Overlay,
+                BorderBrush = Look.Tokens.Warning,
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(Look.Tokens.RPill),
+                Padding = new Thickness(8, 1),
+                Margin = new Thickness(6),
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Top,
+                Child = new TextBlock { Text = flag, FontSize = Look.Theme.Caption, FontWeight = FontWeight.SemiBold, Foreground = Look.Tokens.Warning },
+            };
+            picture = new Panel { Height = CoverH, Children = { picture, chip } };
+        }
         var title = new TextBlock
         {
             Text = MainWindow.ShortTitle(p.Title),
