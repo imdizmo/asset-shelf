@@ -1368,10 +1368,18 @@ public sealed class MainWindow : Window
             var menu = new MenuFlyout { Placement = PlacementMode.BottomEdgeAlignedRight };
             foreach (var (t, icon, keys) in SendTargets)
             {
+                bool last = t == _settings.LastSend;
+                var header = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+                header.Children.Add(new TextBlock { Text = n > 1 ? $"Send {n} to {t}" : $"Send to {t}", VerticalAlignment = VerticalAlignment.Center });
+                if (last)
+                {
+                    header.Children.Add(new TextBlock { Text = "last used", FontSize = Look.Tokens.FsCaption, Foreground = Look.Tokens.Mute, VerticalAlignment = VerticalAlignment.Center });
+                }
+
                 var item = new MenuItem
                 {
-                    Header = n > 1 ? $"Send {n} to {t}" : $"Send to {t}",
-                    Icon = new Icon(icon, 16),
+                    Header = header,
+                    Icon = last ? new Icon("check", 16) { Foreground = Look.Tokens.Accent } : new Icon(icon, 16),
                     InputGesture = keys is null ? null : KeyGesture.Parse(keys),
                     IsEnabled = Target(t).IsEnabled,
                     FontSize = Look.Theme.Label,
@@ -1403,7 +1411,13 @@ public sealed class MainWindow : Window
     {
         string t = SendTargets.Any(x => x.Target == _settings.LastSend) ? _settings.LastSend : "Unreal";
         int n = Targets().Count;
-        _sendMain.Content = Chrome.IconAndText(SendTargets.First(x => x.Target == t).Icon, n > 1 ? $"Send {n} to {t}" : $"Send to {t}");
+        var label = Chrome.IconAndText(SendTargets.First(x => x.Target == t).Icon, n > 1 ? $"Send {n} to {t}" : $"Send to {t}");
+        foreach (TextBlock tb in label.Children.OfType<TextBlock>())
+        {
+            tb.FontWeight = FontWeight.SemiBold;  // the primary button's label is 600, as the spec's
+        }
+
+        _sendMain.Content = label;
         _sendMain.IsEnabled = Target(t).IsEnabled;
     }
 
