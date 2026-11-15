@@ -24,14 +24,14 @@ public static class UnrealSetup
     /// (LauncherInstalled.dat, Program Files/Epic Games/UE_5.x), <see cref="Version"/> or later.</summary>
     public static string? Find(Settings s)
     {
-        bool Usable(string p) => p.Length > 0 && Editor(p) is not null && Minor(p) >= Minor(Version);
+        bool Ok(string p) => p.Length > 0 && Editor(p) is not null && Minor(p) >= Minor(Version);
         if (new[] { s.UnrealEngine, Environment.GetEnvironmentVariable("UNREAL_ENGINE") ?? "" }.FirstOrDefault(p => p.Length > 0) is { } chosen)
         {
-            return Usable(chosen) ? chosen : null;
+            return Ok(chosen) ? chosen : null;
         }
 
         string home = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "UnrealEngine");
-        return Usable(home) ? home : Launcher().Where(Usable).MaxBy(Minor);
+        return Ok(home) ? home : Usable(Launcher());
     }
 
     /// <summary>The headless editor in an engine folder, or null when it is not there (yet).</summary>
@@ -61,34 +61,52 @@ public static class UnrealSetup
         }
     }
 
-    /// <summary>Engines Epic's launcher installed.</summary>
-    private static IEnumerable<string> Launcher()
+    private static string[] ProgramFiles() =>
+        [.. new[] { Environment.SpecialFolder.ProgramFiles, Environment.SpecialFolder.ProgramFilesX86 }.Select(Environment.GetFolderPath).Where(p => p.Length > 0)];
+
+    private static bool InProgramFiles(string path)
+    {
+        string full = Path.GetFullPath(path);
+        return ProgramFiles().Any(pf => full.StartsWith(Path.TrimEndingDirectorySeparator(pf) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>Engines in Program Files (only administrators can change those): Epic Games/UE_5.x, and the launcher's
+    /// installs that lie there. macOS's /Users/Shared is writable by every user, so a Mac sets the engine by hand.</summary>
+    private static IEnumerable<string> Launcher() =>
+        ProgramFiles().Select(pf => Path.Combine(pf, "Epic Games")).Where(Directory.Exists)
+            .SelectMany(epic => Directory.EnumerateDirectories(epic, "UE_5.*"))
+            .Concat(Listed().Where(InProgramFiles));
+
+    /// <summary>Engines the launcher installed outside Program Files (another drive, say). Its list
+    /// (ProgramData/Epic/UnrealEngineLauncher/LauncherInstalled.dat) can be changed by other accounts on the computer, so
+    /// these are only used once the user says so.</summary>
+    private static IEnumerable<string> ListedElsewhere() => Listed().Where(p => !InProgramFiles(p));
+
+    private static List<string> Listed()
     {
         string dat = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Epic", "UnrealEngineLauncher", "LauncherInstalled.dat");
-        var found = new List<string>();
         try
         {
             using JsonDocument d = JsonDocument.Parse(File.ReadAllBytes(dat));
-            found.AddRange(d.RootElement.GetProperty("InstallationList").EnumerateArray()
+            return [.. d.RootElement.GetProperty("InstallationList").EnumerateArray()
                 .Where(e => e.GetProperty("AppName").GetString()?.StartsWith("UE_", StringComparison.Ordinal) == true)
-                .Select(e => e.GetProperty("InstallLocation").GetString() ?? ""));
+                .Select(e => e.GetProperty("InstallLocation").GetString() ?? "")
+                .Where(p => p.Length > 0 && Path.IsPathFullyQualified(p))];
         }
         catch (Exception e) when (e is IOException or JsonException or KeyNotFoundException or UnauthorizedAccessException or InvalidOperationException)
         {
-            // no launcher, or nothing installed with it
+            return [];  // no launcher, or nothing installed with it
         }
+    }
 
-        // only Program Files (admin-writable); macOS's /Users/Shared is writable by every user, so a Mac sets the engine by hand
-        foreach (string pf in new[] { Environment.SpecialFolder.ProgramFiles, Environment.SpecialFolder.ProgramFilesX86 }.Select(Environment.GetFolderPath))
-        {
-            string epic = Path.Combine(pf, "Epic Games");
-            if (pf.Length > 0 && Directory.Exists(epic))
-            {
-                found.AddRange(Directory.EnumerateDirectories(epic, "UE_5.*"));
-            }
-        }
+    private static string? Usable(IEnumerable<string> engines) => engines.Where(p => Editor(p) is not null && Minor(p) >= Minor(Version)).MaxBy(Minor);
 
-        return found;
+    /// <summary>Uses an engine the user confirmed: kept as the UnrealEngine setting, which Find then takes as it is.</summary>
+    private static string Keep(Settings s, string engine)
+    {
+        s.UnrealEngine = engine;
+        s.Save();
+        return engine;
     }
 
     private static string? LauncherExe() =>
@@ -105,6 +123,12 @@ public static class UnrealSetup
         if (Find(s) is { } engine)
         {
             return engine;
+        }
+
+        if (Usable(ListedElsewhere()) is { } listed
+            && await Prompt.Confirm(owner, "Use this Unreal Engine?", $"Epic's launcher lists Unreal Engine 5.{Minor(listed)} at {listed}. Use it to export assets? Say yes only if you installed it there.", "Use it"))
+        {
+            return Keep(s, listed);
         }
 
         if (!OperatingSystem.IsWindows())
@@ -203,6 +227,8 @@ public static class UnrealSetup
             // launcher version ignores it for the engine, the hint says where the button is
             Process.Start(new ProcessStartInfo($"com.epicgames.launcher://apps/{AppName}?action=install") { UseShellExecute = true })?.Dispose();
             var sw = Stopwatch.StartNew();
+            // installs listed outside Program Files before this one started are not taken (the user can have said no to them)
+            HashSet<string> before = new(ListedElsewhere(), StringComparer.OrdinalIgnoreCase);
             while (true)
             {
                 Say($"Installing Unreal Engine {Version} in Epic Games Launcher… ({sw.Elapsed:h\\:mm} so far)",
@@ -210,6 +236,11 @@ public static class UnrealSetup
                 if (Find(s) is { } engine)
                 {
                     return engine;
+                }
+
+                if (Usable(ListedElsewhere().Where(p => !before.Contains(p))) is { } installed)
+                {
+                    return Keep(s, installed);  // the folder the user just picked in the launcher
                 }
 
                 await Task.Delay(TimeSpan.FromSeconds(10), stop).ConfigureAwait(false);
