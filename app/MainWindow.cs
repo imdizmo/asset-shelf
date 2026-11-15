@@ -1825,14 +1825,29 @@ public sealed class MainWindow : Window
         string licence = p is { Licence.Name.Length: > 0 } ? string.Join(" ", new[] { p.Licence.Name, p.Licence.Tier }.Where(x => x.Length > 0)) : pack.Licence;
         var lic = new StackPanel { Spacing = 2 };
         lic.Children.Add(new TextBlock { Text = licence.Length > 0 ? licence : "Not stated", FontSize = Look.Theme.Label, Foreground = Look.Tokens.Text, TextWrapping = TextWrapping.Wrap });
-        lic.Children.Add(Provenance.LicenceNotSaved(p, pack.IndexDir, LibraryRoot)
-            ? Flag("Licence not saved", "No copy of the licence text is kept in the library. Store terms change and listings vanish: the copy is what shows the right to use it.")
-            : new TextBlock { Text = $"Copy saved {p!.Licence.Copies[^1].Saved}", FontSize = Look.Theme.Caption, Foreground = Look.Tokens.Mute });
+        lic.Children.Add(Provenance.SummaryOnly(p, pack.IndexDir, LibraryRoot)
+            ? Flag("Summary only", "Only the store's summary of the licence is saved, not the binding text. Save the full licence (Origin…) for this pack, or once in the library's licences folder.")
+            : Provenance.LicenceNotSaved(p, pack.IndexDir, LibraryRoot)
+            ? Flag("Licence not saved", "No copy of the licence terms is kept in the library. Store terms change and listings vanish: the copy is what shows the right to use it.")
+            : new TextBlock { Text = $"Copy saved {p!.Licence.Copies.Last(c => c.Kind == "licence").Saved}", FontSize = Look.Theme.Caption, Foreground = Look.Tokens.Mute });
+        foreach (string cond in p?.Licence.Conditions ?? [])
+        {
+            lic.Children.Add(Flag(cond switch { "no-ai-training" => "Not for AI training", "no-resale" => "No resale", "credit-required" => "Credit required", _ => cond }, "A condition stated in the licence text."));
+        }
+
         about.Body.Children.Add(InfoRow("Licence", lic));
+        if (p?.Licence.Credit is { Length: > 0 } credit)
+        {
+            about.Body.Children.Add(InfoRow("Credit", new SelectableTextBlock { Text = credit, FontSize = Look.Theme.Label, Foreground = Look.Tokens.Text, TextWrapping = TextWrapping.Wrap }));
+        }
 
         string how = p?.Acquired.How is { Length: > 0 } h ? h : "unknown";
         string date = p?.Acquired.Date is { Length: > 0 } d ? d : pack.Acquired;
         string acquired = how == "unknown" ? (date.Length > 0 ? $"{ShortDate(date)} (how not recorded)" : "Not recorded") : date.Length > 0 ? $"{Capital(how)}, {ShortDate(date)}" : Capital(how);
+        if (p?.Acquired.Via is { Length: > 0 } via)
+        {
+            acquired += $" (through {via})";
+        }
         about.Body.Children.Add(InfoRow("Acquired", acquired));
         if (p is { Receipts.Count: > 0 })
         {

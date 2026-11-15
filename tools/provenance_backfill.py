@@ -19,6 +19,7 @@ import html
 import json
 import os
 import re
+import shutil
 import sys
 import urllib.request
 
@@ -71,14 +72,59 @@ def slug(s):
     return (t or 'licence')[:60]
 
 
-def save_copy(folder, rel_root, text, frm, name):
+LICENCE_WORDS = re.compile(r'licen[cs]e|terms of use|free for (personal|commercial)|commercial use|you may (not )?(use|modify|sell|redistribute)|public domain|\bcc0\b|creative commons', re.I)
+
+
+def kind_of(text, claimed):
+    """licence when the text holds the licence the pack claims (or licence wording at all), else listing."""
+    t = text.lower()
+    c = claimed.lower()
+    if c.startswith('cc0'):
+        return 'licence' if re.search(r'\bcc0\b|public domain|creative commons zero', t) else 'listing'
+    if c.startswith('cc-by'):
+        return 'licence' if re.search(r'creative commons attribution|\bcc[- ]by\b', t) and 'legal code' in t else 'listing'
+    return 'licence' if LICENCE_WORDS.search(t) else 'listing'
+
+
+def conditions(text):
+    t = text.lower()
+    found = []
+    if re.search(r'\bai\b[^.]{0,30}train|not for ai|machine.learning|dataset', t):
+        found.append('no-ai-training')
+    if re.search(r'resell|resale|redistribut', t):
+        found.append('no-resale')
+    if re.search(r'(?<!no )(?<!without )(attribution|credit)( is)? (required|needed)|must (give )?credit', t):
+        found.append('credit-required')
+    return found
+
+
+def save_copy(folder, rel_root, text, frm, name, kind='licence'):
     """Writes a dated text copy under folder; returns the copy record (path relative to rel_root)."""
     os.makedirs(folder, exist_ok=True)
     path = os.path.join(folder, f'licence-{TODAY}-{slug(name)}.txt')
     with open(path, 'w', encoding='utf-8') as f:
         f.write(text)
     return {'file': os.path.relpath(path, rel_root), 'from': frm, 'saved': TODAY,
-            'sha256': hashlib.sha256(text.encode('utf-8')).hexdigest()}
+            'sha256': hashlib.sha256(text.encode('utf-8')).hexdigest(), 'kind': kind}
+
+
+def fab_summary(text):
+    """Fab's licence page as text, cut to the Standard License summary (the site's menus and footer dropped)."""
+    start = text.find('Fab Standard License')
+    if start < 0:
+        return text
+    ends = [i for i in (text.find(k, start) for k in ('Cookies Settings', 'Privacy Policy', 'Terms of Service', '\u00a9')) if i > 0]
+    return text[start:min(ends)].strip() if ends else text[start:].strip()
+
+
+def listing_description(raw):
+    """An itch.io page's own description block, without the page's "More information" table."""
+    m = re.search(r'<div class="formatted_description[^"]*"[^>]*>(.*?)</div>\s*</div>', raw, re.S)
+    if not m:
+        return ''
+    text = to_text(m.group(1))
+    cut = text.find('More information')
+    return text[:cut].strip() if cut > 0 else text
 
 
 def shipped_licences(pack_dir):
@@ -128,7 +174,9 @@ def itch_owned():
             d = itch_sync.api(f'/profile/owned-keys?page={page}')
             for k in d.get('owned_keys', []):
                 gid = k['game']['id']
-                owned[gid] = (owned.get(gid, (False, account))[0] or bool(k.get('purchase_id')), account)
+                before = owned.get(gid, (False, account, ''))
+                purchase = str(k.get('purchase_id') or '') or before[2]
+                owned[gid] = (before[0] or bool(k.get('purchase_id')), account, purchase)
             if len(d.get('owned_keys', [])) < d.get('per_page', 50):
                 break
             page += 1
@@ -150,12 +198,26 @@ def main():
     a.add_argument('--only', default='')
     a.add_argument('--dry-run', action='store_true')
     a.add_argument('--no-network', action='store_true')
+    a.add_argument('--redo', action='store_true', help='rebuild the automatic licence copies of these packs (hand-made ones stay)')
     o = a.parse_args()
     library = os.path.dirname(os.path.abspath(o.index.rstrip('/')))
     only = set(filter(None, o.only.split(',')))
     ids = sorted(d for d in os.listdir(o.index) if os.path.isfile(os.path.join(o.index, d, 'pack.json')) and (not only or d in only))
     owned = {} if o.no_network or not any(i.startswith('itch_') for i in ids) else itch_owned()
     fab_copy = None
+    full_fab = sorted(f for f in os.listdir(os.path.join(library, 'licences')) if f.startswith('fab-eula-full')) if os.path.isdir(os.path.join(library, 'licences')) else []
+    shared = {}  # purchase id -> games, to tell bundles
+    for gid, (_, _, purchase) in owned.items():
+        if purchase:
+            shared.setdefault(purchase, []).append(gid)
+    inbox = []
+    inbox_dir = os.path.join(library, 'receipts', 'inbox')
+    for f in sorted(os.listdir(inbox_dir)) if os.path.isdir(inbox_dir) else []:
+        if f.endswith('.json') and os.path.getsize(os.path.join(inbox_dir, f)) < 65536:
+            try:
+                inbox.append((f, json.load(open(os.path.join(inbox_dir, f)))))
+            except (OSError, ValueError):
+                pass
     counts = {'packs': 0, 'source': 0, 'licence copy': 0, 'how known': 0, 'written': 0}
     for pid in ids:
         idx = os.path.join(o.index, pid)
@@ -177,6 +239,17 @@ def main():
                 d.setdefault(k, '')
         prov.setdefault('receipts', [])
         lic.setdefault('copies', [])
+        lic.setdefault('credit', '')
+        lic.setdefault('conditions', [])
+        acq.setdefault('via', '')
+        acq.setdefault('purchase', '')
+        if o.redo and not o.dry_run:
+            for c in [c for c in lic['copies'] if c.get('from', '').startswith(('pack:', 'https://'))]:
+                p = os.path.join(idx, c['file'])
+                if c['file'].startswith('provenance') and os.path.isfile(p):
+                    os.remove(p)
+                lic['copies'].remove(c)
+            lic['conditions'] = []
         url = pack.get('url', '')
         site = 'itch.io' if pid.startswith('itch_') else 'Patreon' if pid.startswith('patreon_') else 'Fab' if 'fab.com' in url else (re.sub(r'^www\.', '', url.split('/')[2]) if url.startswith('https://') else '')
         fill(src, 'site', site)
@@ -186,33 +259,73 @@ def main():
         fill(lic, 'name', name)
         fill(lic, 'tier', tier)
         fill(acq, 'date', (pack.get('acquired') or '')[:10])
-        if not acq.get('how') or acq['how'] == 'unknown':
+        if not acq.get('how'):
             acq['how'] = 'unknown'
-            if site == 'itch.io':
-                try:
-                    game = json.load(open(os.path.join(o.packs, pid, 'itch.json')))['game']
-                    gid = game['id'] if isinstance(game, dict) else game  # itch_sync stores the id itself
-                except (OSError, ValueError, KeyError, TypeError):
-                    gid = None
-                if gid in owned:
+        if site == 'itch.io':
+            try:
+                game = json.load(open(os.path.join(o.packs, pid, 'itch.json')))['game']
+                gid = game['id'] if isinstance(game, dict) else game  # itch_sync stores the id itself
+            except (OSError, ValueError, KeyError, TypeError):
+                gid = None
+            if gid in owned:
+                if acq['how'] == 'unknown':
                     acq['how'] = 'bought' if owned[gid][0] else 'free download'
-                    fill(acq, 'account', owned[gid][1])
-        if not o.dry_run and not lic['copies']:
+                fill(acq, 'account', owned[gid][1])
+                fill(acq, 'purchase', owned[gid][2])
+        if site == 'itch.io' and acq.get('purchase'):
+            # a receipt in the inbox for this purchase (P-<id>): its bundle name, and a copy for the pack
+            for f, side in inbox:
+                if str(side.get('order', '')) == 'P-' + acq['purchase']:
+                    items = side.get('items') or []
+                    if len(shared.get(acq['purchase'], [])) > 1 and items:
+                        fill(acq, 'via', str(items[0])[:120])
+                    if not any(r.get('order') == side.get('order') for r in prov['receipts']) and not o.dry_run:
+                        rdir = os.path.join(idx, 'provenance', 'receipts')
+                        os.makedirs(rdir, exist_ok=True)
+                        stem = f[:-5]
+                        main_file = ''
+                        for g in os.listdir(inbox_dir):
+                            if os.path.splitext(g)[0] == stem and not os.path.islink(os.path.join(inbox_dir, g)):
+                                shutil.copyfile(os.path.join(inbox_dir, g), os.path.join(rdir, g))
+                                if not g.endswith('.json'):
+                                    main_file = g
+                        prov['receipts'].append({'order': str(side.get('order', '')), 'date': str(side.get('date') or ''),
+                                                 'price': str(side.get('price') or ''), 'currency': str(side.get('currency') or ''),
+                                                 'file': os.path.join('provenance', 'receipts', main_file or f)})
+        claimed = pack.get('licence', '')
+        if not o.dry_run and not any(c.get('from', '').startswith(('pack:', 'https://')) for c in lic['copies']):
             prov_dir = os.path.join(idx, 'provenance')
+            texts = []
             for rel, text in shipped_licences(os.path.join(o.packs, pid)):
-                lic['copies'].append(save_copy(prov_dir, idx, text, f'pack:{rel}', os.path.splitext(os.path.basename(rel))[0]))
-            if site == 'itch.io' and not o.no_network and (raw := page_text(url)):
-                m = re.search(r'formatted_description.*?</div>\s*</div>', raw, re.S)
-                if m and (text := to_text(m.group(0))):
-                    lic['copies'].append(save_copy(prov_dir, idx, text, url, 'itch-listing'))
-            if site == 'Fab' and not o.no_network:
-                if fab_copy is None and (raw := page_text(FAB_LICENCE)) and (text := to_text(raw)):
-                    fab_copy = save_copy(os.path.join(library, 'licences'), library, text, FAB_LICENCE, 'fab-eula')
-                if fab_copy:
-                    lic['copies'].append(dict(fab_copy))
-                    fill(lic, 'url', FAB_LICENCE)
+                kind = kind_of(text, claimed)
+                lic['copies'].append(save_copy(prov_dir, idx, text, f'pack:{rel}', os.path.splitext(os.path.basename(rel))[0], kind))
+                texts.append((kind, text))
+            if site == 'itch.io' and not o.no_network and (raw := page_text(url)) and (text := listing_description(raw)):
+                kind = kind_of(text, claimed)
+                lic['copies'].append(save_copy(prov_dir, idx, text, url, 'itch-listing', kind))
+                texts.append((kind, text))
+            if site == 'Fab':
+                if full_fab and name == 'Fab Standard License':
+                    # the binding EULA, saved by hand once for the library
+                    lic['copies'].append({'file': os.path.join('licences', full_fab[-1]), 'from': 'saved by hand', 'saved': full_fab[-1][-14:-4], 'sha256': '', 'kind': 'licence'})
+                elif not o.no_network:
+                    if fab_copy is None and (raw := page_text(FAB_LICENCE)) and (text := fab_summary(to_text(raw))):
+                        fab_copy = save_copy(os.path.join(library, 'licences'), library, text, FAB_LICENCE, 'fab-standard-license-summary', 'summary')
+                    if fab_copy:
+                        lic['copies'].append(dict(fab_copy))
+                        fill(lic, 'url', FAB_LICENCE)
+            for kind, text in texts:
+                if kind == 'licence':
+                    lic['conditions'] = sorted(set(lic['conditions']) | set(conditions(text)))
+            if not lic.get('name') and any(k == 'licence' for k, _ in texts):
+                lic['name'] = f"{pack.get('seller', 'Creator')} terms (from the listing)"[:120]
+        if claimed.lower().startswith('cc-by'):
+            # attribution is the whole condition: the credit to give, from the pack's own data
+            fill(lic, 'credit', f"{pack.get('title', pid)} by {pack.get('seller', '')}, {url}".strip(', '))
+            if 'credit-required' not in lic['conditions']:
+                lic['conditions'].append('credit-required')
         counts['source'] += bool(src.get('url'))
-        counts['licence copy'] += bool(lic['copies'])
+        counts['licence copy'] += any(c.get('kind', 'licence') == 'licence' for c in lic['copies'])
         counts['how known'] += acq.get('how', 'unknown') != 'unknown'
         if not o.dry_run:
             tmp = prov_path + '.part'

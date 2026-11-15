@@ -29,6 +29,12 @@ public sealed class Provenance
         public string Tier { get; set; } = "";
         public string Url { get; set; } = "";
         public List<LicenceCopy> Copies { get; set; } = [];
+
+        /// <summary>The credit line an attribution licence (CC-BY) asks for: pack, creator, listing.</summary>
+        public string Credit { get; set; } = "";
+
+        /// <summary>Conditions found in the licence text: no-ai-training, no-resale, credit-required, …</summary>
+        public List<string> Conditions { get; set; } = [];
     }
 
     /// <summary>A saved licence text: a file under the pack's provenance/ folder or the library's licences/ folder.</summary>
@@ -38,6 +44,10 @@ public sealed class Provenance
         public string From { get; set; } = "";
         public string Saved { get; set; } = "";
         public string Sha256 { get; set; } = "";
+
+        /// <summary>licence (contains the terms), summary (a store's non-binding summary), or listing (a store page's
+        /// text without licence wording). Only a licence copy counts as the licence being saved.</summary>
+        public string Kind { get; set; } = "licence";
     }
 
     public sealed class AcquiredInfo
@@ -46,6 +56,11 @@ public sealed class Provenance
         public string How { get; set; } = "unknown";
         public string Date { get; set; } = "";
         public string Account { get; set; } = "";
+
+        /// <summary>A bundle or offer it came through (e.g. "Creator Bundle: Volume 1"), and the store's purchase id.</summary>
+        public string Via { get; set; } = "";
+
+        public string Purchase { get; set; } = "";
     }
 
     public sealed class Receipt
@@ -92,7 +107,11 @@ public sealed class Provenance
 
     /// <summary>No saved licence text that still exists in the library.</summary>
     public static bool LicenceNotSaved(Provenance? p, string indexDir, string libraryRoot) =>
-        p is null || !p.Licence.Copies.Any(c => CopyPath(c, indexDir, libraryRoot) is { } f && File.Exists(f));
+        p is null || !p.Licence.Copies.Any(c => c.Kind == "licence" && CopyPath(c, indexDir, libraryRoot) is { } f && File.Exists(f));
+
+    /// <summary>Only a store's summary of the licence is saved, not the binding text.</summary>
+    public static bool SummaryOnly(Provenance? p, string indexDir, string libraryRoot) =>
+        LicenceNotSaved(p, indexDir, libraryRoot) && p!.Licence.Copies.Any(c => c.Kind == "summary" && CopyPath(c, indexDir, libraryRoot) is not null);
 
     /// <summary>Bought, with no receipt on file: the only case marked as a warning (free packs only show in the filter).</summary>
     public static bool BoughtWithoutReceipt(Provenance? p) => p is { Acquired.How: "bought", Receipts.Count: 0 };
