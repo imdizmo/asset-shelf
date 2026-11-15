@@ -245,8 +245,10 @@ def main():
         acq.setdefault('purchase', '')
         if o.redo and not o.dry_run:
             for c in [c for c in lic['copies'] if c.get('from', '').startswith(('pack:', 'https://'))]:
+                # only a real file inside this pack's own provenance/ folder (the entry is data and could point anywhere)
                 p = os.path.join(idx, c['file'])
-                if c['file'].startswith('provenance') and os.path.isfile(p):
+                root = os.path.realpath(os.path.join(idx, 'provenance'))
+                if os.path.isfile(p) and not os.path.islink(p) and os.path.realpath(p).startswith(root + os.sep):
                     os.remove(p)
                 lic['copies'].remove(c)
             lic['conditions'] = []
