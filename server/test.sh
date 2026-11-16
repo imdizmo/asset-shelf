@@ -15,6 +15,26 @@ code() { curl -s -o "$s/out" -w '%{http_code}' "$@"; }
 want() { [[ "$1" == "$2" ]] || { echo "FAIL $3: got $1 want $2: $(cat "$s/out")"; exit 1; }; echo "ok $3"; }
 start me@x
 want "$(code $u/team/whoami)" 200 whoami; grep -q '"role":"member"' "$s/out"
+want "$(code $u/team/projects)" 200 projects-none; grep -q '"projects":\[\]' "$s/out"
+cat > "$s/projects.json" <<'J'
+{"version":1,"projects":[
+ {"id":"game","name":"The Game","description":"d","git":"https://example.com/o/game.git","lfs":"game","setup":"tools/setup.sh","branch":"main","folder":"Game","memoryMax":"16G","secret":"x"},
+ {"id":"opt","git":"git@example.com:o/opt.git","setup":"setup.sh","branch":"-x","folder":"../up","memoryMax":"lots"},
+ {"id":"bad id","git":"https://example.com/x.git","setup":"s.sh"},
+ {"id":"argv","git":"https://example.com/x.git","setup":["powershell","-c","x"]},
+ {"id":"up","git":"https://example.com/x.git","setup":"tools/../../evil.sh"},
+ {"id":"abs","git":"https://example.com/x.git","setup":"/bin/sh"},
+ {"id":"dash","git":"-uhttps://example.com/x.git","setup":"s.sh"}]}
+J
+want "$(code $u/team/projects)" 200 projects
+python3 -I - "$s/out" "$port" <<'P'
+import json,sys
+d=json.load(open(sys.argv[1])); p={x["id"]:x for x in d["projects"]}
+assert d["schema"]==1 and sorted(p)==["game","opt"], p
+g=p["game"]; assert g["lfs"]==f"http://127.0.0.1:{sys.argv[2]}/lfs/game" and g["setup"]=="tools/setup.sh" and g["folder"]=="Game" and g["memoryMax"]=="16G" and "secret" not in g
+o=p["opt"]; assert o["name"]=="opt" and o["lfs"] is None and not {"branch","folder","memoryMax"} & set(o), o
+P
+echo "ok projects-checked"
 want "$(code $u/library)" 200 library; grep -q '"pack.json"' "$s/out"
 want "$(code $u/library/P1/index/thumbs/a.png)" 200 thumb
 want "$(code $u/library/P1/files)" 200 listing; grep -q 'A.uasset' "$s/out"; ! grep -q '"link"' "$s/out"
@@ -60,4 +80,5 @@ kill $pid; wait $pid 2>/dev/null || true
 start stranger@x
 want "$(code $u/team/whoami)" 200 stranger-whoami; grep -q '"role":null' "$s/out"
 want "$(code $u/library)" 403 stranger
+want "$(code $u/team/projects)" 403 stranger-projects
 echo "all passed"; rm -rf "${s:?}"

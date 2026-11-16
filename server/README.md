@@ -12,11 +12,27 @@ props teammates publish (zips, kept as they are sent). It recognises callers by 
   service on the same machine can write it; it is re-read when it changes. Roles: `observer` reads; `member`, `admin`
   and `owner` also publish. People Tailscale recognises but who are not on the list get only `/team/whoami`.
 
+## The team's projects
+
+`projects.json`, in the same folder as `team.json`, lists the team's projects for the launcher. The owner edits it by
+hand, and it is re-read when it changes:
+
+```json
+{ "version": 1, "projects": [ { "id": "game", "name": "The Game", "description": "…",
+  "git": "https://example.com/owner/game.git", "lfs": "game", "setup": "tools/setup.sh",
+  "branch": "main", "folder": "Game", "memoryMax": "16G" } ] }
+```
+
+`setup` is the path of a script inside the repository, never a command: this file only chooses which of the
+repository's own files runs. An entry without a valid id, git URL (`https://…` or `git@host:…`) or setup path is
+dropped. An optional field that does not check out is left out.
+
 ## API (plain http, port 8781; errors are JSON `{ "error": "<a sentence for a person>" }`)
 
 | Request | Answer |
 |---|---|
 | `GET /team/whoami` | `{ login, name, role or null, service: "shelf", version }` |
+| `GET /team/projects` | `{ schema: 1, projects: [ { id, name, description, git, lfs (full URL or null), setup, branch?, folder?, memoryMax? } ] }` from `projects.json` beside the team list; members only |
 | `GET /library` | `[ { id, files: [ { name, size, mtime } ] } ]`: each pack's top index files |
 | `GET /library/{pack}/index/{path}` | a file from `index/{pack}/` |
 | `GET /library/{pack}/files` | `[ { path, size, mtime } ]`: every file of `packs/{pack}/` |

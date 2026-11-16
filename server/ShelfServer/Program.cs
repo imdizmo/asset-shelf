@@ -142,6 +142,10 @@ public static partial class Server
             {
                 await NotMember(req, res, who);
             }
+            else if (get && seg is ["team", "projects"])
+            {
+                await Json(res, 200, new JsonObject { ["schema"] = 1, ["projects"] = Projects.List($"http://{req.Url!.Authority}") });
+            }
             else if (get && seg is ["library"])
             {
                 await LibraryList(res);
@@ -381,6 +385,98 @@ public static partial class Server
             return roles;
         }
     }
+
+    /// <summary>projects.json beside team.json (the owner edits it): the team's projects, for the Launcher's project
+    /// cards. Each: id, name, description, git (what to clone), lfs (a project name here), setup (a script's path inside the
+    /// clone: never a command, so this file cannot make a teammate's machine run anything the repository does not hold),
+    /// and optionally branch, folder and memoryMax. Anything that does not check out is dropped.</summary>
+    static class Projects
+    {
+        static DateTime _stamp;
+        static List<(string Id, JsonObject Row, string? Lfs)> _rows = [];
+        static readonly Lock Gate = new();
+
+        static string File => Path.Combine(Path.GetDirectoryName(Path.GetFullPath(_teamFile))!, "projects.json");
+
+        public static JsonArray List(string server)
+        {
+            lock (Gate)
+            {
+                DateTime t = System.IO.File.Exists(File) ? System.IO.File.GetLastWriteTimeUtc(File) : default;
+                if (t != _stamp)
+                {
+                    _stamp = t;
+                    _rows = t == default ? [] : Read();
+                }
+
+                return new JsonArray([.. _rows.Select(r =>
+                {
+                    var o = (JsonObject)r.Row.DeepClone();
+                    o["lfs"] = r.Lfs is null ? null : $"{server}/lfs/{r.Lfs}";
+                    return (JsonNode)o;
+                })]);
+            }
+        }
+
+        static string Cap(JsonNode? n, int max) => n is JsonValue v && v.TryGetValue(out string? s) ? s.Trim()[..Math.Min(s.Trim().Length, max)] : "";
+
+        static List<(string, JsonObject, string?)> Read()
+        {
+            var rows = new List<(string, JsonObject, string?)>();
+            try
+            {
+                foreach (JsonNode? p in JsonNode.Parse(System.IO.File.ReadAllText(File))?["projects"]?.AsArray() ?? [])
+                {
+                    string id = Cap(p?["id"], 64), git = Cap(p?["git"], 500), lfs = Cap(p?["lfs"], 64), setup = Cap(p?["setup"], 200);
+                    if (!IdRule().IsMatch(id) || !GitUrl().IsMatch(git) || !RepoPath().IsMatch(setup) || setup.Split('/').Contains(".."))
+                    {
+                        Console.Error.WriteLine($"{DateTime.UtcNow:O} projects.json: entry {id} left out (it needs an id, a git URL that is https://… or git@host:…, and setup as a path inside the repository)");
+                        continue;
+                    }
+
+                    var row = new JsonObject { ["id"] = id, ["name"] = Cap(p?["name"], 60) is { Length: > 0 } n ? n : id, ["description"] = Cap(p?["description"], 1000), ["git"] = git, ["setup"] = setup };
+                    // optional: a value that does not check out is left out, and the client's default applies
+                    if (Cap(p?["branch"], 100) is var branch && Branch().IsMatch(branch) && !branch.Contains(".."))
+                    {
+                        row["branch"] = branch;
+                    }
+
+                    if (Cap(p?["folder"], 100) is var folder && Folder().IsMatch(folder))
+                    {
+                        row["folder"] = folder;
+                    }
+
+                    if (Cap(p?["memoryMax"], 10) is var mem && Memory().IsMatch(mem))
+                    {
+                        row["memoryMax"] = mem;
+                    }
+
+                    rows.Add((id, row, IdRule().IsMatch(lfs) ? lfs : null));
+                }
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException or JsonException or InvalidOperationException)
+            {
+                Console.Error.WriteLine($"{DateTime.UtcNow:O} projects.json not read ({e.Message}): no projects until it is");
+            }
+
+            return rows;
+        }
+    }
+
+    [GeneratedRegex(@"^(https://[A-Za-z0-9.-]+(:\d+)?/[^\s""'\\]+|git@[A-Za-z0-9.-]+:[A-Za-z0-9._/-]+)$")]
+    private static partial Regex GitUrl();
+
+    [GeneratedRegex("^[A-Za-z0-9_][A-Za-z0-9._-]*(/[A-Za-z0-9_.-]+)*$")]
+    private static partial Regex RepoPath();
+
+    [GeneratedRegex("^[A-Za-z0-9_][A-Za-z0-9._/-]*$")]
+    private static partial Regex Branch();
+
+    [GeneratedRegex("^[A-Za-z0-9_][A-Za-z0-9 ._-]*$")]
+    private static partial Regex Folder();
+
+    [GeneratedRegex("^[1-9][0-9]{0,5}[KMG]$")]
+    private static partial Regex Memory();
 
     // ---- the library ----
 
