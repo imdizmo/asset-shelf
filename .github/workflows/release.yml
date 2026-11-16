@@ -26,6 +26,26 @@ jobs:
         run: |
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then v="$GITHUB_REF_NAME"; else v="v0.0.0-ci.$GITHUB_RUN_NUMBER"; fi
           echo "version=$v" >> "$GITHUB_OUTPUT"
+      - name: Release notes from the changelogs
+        # a tag without its own section in CHANGELOG.md (and the server's in server/CHANGELOG.md) does not publish
+        run: |
+          v="${{ steps.version.outputs.version }}"; v="${v#v}"
+          section() { awk -v h="## [$2]" 'index($0, h) == 1 {on = 1; next} on && /^## \[/ {exit} on' "$1"; }
+          mkdir -p dist
+          app=$(section CHANGELOG.md "$v")
+          sv=$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' server/ShelfServer/ShelfServer.csproj)
+          server=$(section server/CHANGELOG.md "$sv")
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            [[ -n "${app//[[:space:]]/}" ]] || { echo "::error::CHANGELOG.md has no section ## [$v]"; exit 1; }
+            [[ -n "${server//[[:space:]]/}" ]] || { echo "::error::server/CHANGELOG.md has no section ## [$sv]"; exit 1; }
+          fi
+          { echo "$app"; echo; echo "## ShelfServer $sv (for whoever runs the team server)"; echo "$server" | sed 's/^### /#### /'; } > release-notes.md
+          cat release-notes.md
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: notes
+          path: release-notes.md
+          retention-days: 14
       - name: Package for Linux
         run: scripts/package.sh linux-x64 "${{ steps.version.outputs.version }}" dist
       - name: Package for Windows
@@ -36,7 +56,7 @@ jobs:
           sv=$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' server/ShelfServer/ShelfServer.csproj)
           n="ShelfServer-$sv-linux-arm64"
           dotnet publish server/ShelfServer -c Release -r linux-arm64 --self-contained -p:PublishSingleFile=true -p:PublishTrimmed=true -p:DebugType=none -o "dist/$n/bin"
-          cp server/start.sh server/stop.sh server/update.sh server/README.md "dist/$n/"
+          cp server/start.sh server/stop.sh server/update.sh server/README.md server/CHANGELOG.md "dist/$n/"
           tar -czf "dist/$n.tar.gz" -C dist "$n"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
@@ -58,7 +78,11 @@ jobs:
         with:
           name: packages
           path: dist
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        with:
+          name: notes
+          path: notes
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --title "Asset Shelf $GITHUB_REF_NAME" --generate-notes
+        run: gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --title "Asset Shelf $GITHUB_REF_NAME" --notes-file notes/release-notes.md

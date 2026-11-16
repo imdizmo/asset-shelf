@@ -21,7 +21,7 @@ mkdir -p "$stage/blender" "$stage/unreal"
 cp "$root"/blender/*.py "$stage/blender/"
 cp -r "$root/unreal/AssetShelf" "$stage/unreal/"
 rm -rf "$stage/unreal/AssetShelf/Binaries" "$stage/unreal/AssetShelf/Intermediate"
-cp "$root/README.md" "$root/LICENSE" "$root/NOTICE.md" "$stage/"
+cp "$root/README.md" "$root/CHANGELOG.md" "$root/LICENSE" "$root/NOTICE.md" "$stage/"
 [[ "$rid" == linux-* ]] && cp "$root/scripts/install-desktop-entry.sh" "$stage/"
 # A standalone CPython (python-build-standalone, pinned and SHA-256 checked) goes in python/, so the tools need no
 # Python on the user's system; the app uses it before any other.
