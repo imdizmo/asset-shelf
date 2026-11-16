@@ -71,7 +71,8 @@ public static class Team
         string index = Path.Combine(Mirror, "index"), packs = Path.Combine(Mirror, "packs");
         Directory.CreateDirectory(index);
         Directory.CreateDirectory(packs);
-        List<Row> rows = await GetJsonAsync<List<Row>>("/library");
+        // names come from the server: anything that is not a plain part is dropped, never written
+        List<Row> rows = [.. (await GetJsonAsync<List<Row>>("/library")).Where(r => Part(r.Id)).Select(r => r with { Files = [.. r.Files.Where(f => Part(f.Name))] })];
         var ids = rows.Select(r => r.Id).ToHashSet(StringComparer.Ordinal);
         foreach (string d in Directory.GetDirectories(index).Where(d => !ids.Contains(Path.GetFileName(d))))
         {
@@ -112,6 +113,11 @@ public static class Team
         }
 
         string[] parts = rel.Split(Path.DirectorySeparatorChar);
+        if (!parts.All(Part))
+        {
+            return false;
+        }
+
         try
         {
             await DownloadAsync($"/library/{Esc(parts[0])}/index/{string.Join('/', parts[1..].Select(Esc))}", path, null, default);
@@ -138,7 +144,7 @@ public static class Team
             Pack pack = byPack.Key;
             List<PackFile> all = await GetJsonAsync<List<PackFile>>($"/library/{Esc(pack.Id)}/files");
             var want = new List<PackFile>();
-            foreach (PackFile f in all)
+            foreach (PackFile f in all.Where(f => f.Path.Split('/').All(Part)))
             {
                 string p = f.Path;
                 bool top = !p.Contains('/') || (p.StartsWith("unreal/", StringComparison.Ordinal) && (p.Count(c => c == '/') == 1 || p.StartsWith("unreal/Config/", StringComparison.Ordinal)));
@@ -175,6 +181,10 @@ public static class Team
         string stem = "unreal/Content/" + (i.Package.StartsWith("/Game/", StringComparison.Ordinal) ? i.Package["/Game/".Length..] : i.Package.TrimStart('/'));
         return rel.StartsWith(stem + ".", StringComparison.Ordinal) && !rel[(stem.Length + 1)..].Contains('/');
     }
+
+    /// <summary>A name the server gave that is safe as one part of a local path (not empty, ".", "..", hidden, rooted,
+    /// or holding a separator).</summary>
+    public static bool Part(string s) => s.Length is > 0 and <= 255 && s[0] != '.' && s.IndexOfAny(['/', '\\', ':', '\0']) < 0;
 
     private static bool Same(string local, long size, long mtime)
     {

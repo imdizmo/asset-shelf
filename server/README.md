@@ -28,10 +28,28 @@ props teammates publish (zips, kept as they are sent). It recognises callers by 
 Ids are 1–64 of `A–Z a–z 0–9 - _`. An upload is kept only once all of it has arrived and its zip directory reads;
 the newest 5 versions are kept. Mtimes are Unix milliseconds. Links and hidden files in the library are never served.
 
+## Git LFS
+
+Each project has an LFS endpoint at `http://<server>:8781/lfs/<project>` (the project name follows the id rule
+above). A repository points at it in its `.lfsconfig`:
+
+```ini
+[lfs]
+    url = http://<server>:8781/lfs/<project>
+    locksverify = true
+```
+
+It serves the Batch API with the basic transfer, and File Locking (`git lfs lock`, `locks`, `unlock`). Observers
+download and see locks; members and up also push and lock; an admin or owner can `unlock --force` someone else's lock.
+An object is stored once its size and sha256 match its oid, under `data/lfs/<project>/objects/`, and is never
+changed or deleted. The server never answers 401, so git-lfs does not ask for a password (`server/test-lfs.sh` checks
+this with a real git-lfs).
+
 ## Running it
 
 ```sh
 server/test.sh                                  # the check: every route, on loopback
+server/test-lfs.sh                              # git-lfs push, clone, lock and unlock against it
 server/deploy.sh <ssh-host>:<folder>            # build for linux-arm64 (or pass a rid) and copy it there
 ```
 

@@ -171,6 +171,10 @@ public static partial class Server
             {
                 await SendPublished(req, res, k3, id3);
             }
+            else if (seg is ["lfs", var project, .. var rest])
+            {
+                await Lfs.Handle(req, res, project, rest, who, role);
+            }
             else
             {
                 await Error(res, 404, "There is nothing at this address.");
@@ -222,16 +226,16 @@ public static partial class Server
         await Error(res, 403, msg);
     }
 
-    static async Task Json(HttpListenerResponse res, int status, JsonNode body)
+    static async Task Json(HttpListenerResponse res, int status, JsonNode body, string mime = "application/json; charset=utf-8")
     {
         byte[] b = Encoding.UTF8.GetBytes(body.ToJsonString());
         res.StatusCode = status;
-        res.ContentType = "application/json; charset=utf-8";
+        res.ContentType = mime;
         res.ContentLength64 = b.Length;
         await res.OutputStream.WriteAsync(b);
     }
 
-    static Task Error(HttpListenerResponse res, int status, string message) => Json(res, status, new JsonObject { ["error"] = message });
+    static Task Error(HttpListenerResponse res, int status, string message) => Json(res, status, new JsonObject { ["error"] = message, ["message"] = message });  // "message": what git-lfs shows
 
     // ---- who is calling ----
 
@@ -443,6 +447,18 @@ public static partial class Server
 
         return cur;
     }
+
+    internal static string Store => _store;
+
+    internal static long MaxUpload => _maxUpload;
+
+    internal static bool ValidId(string id) => IdRule().IsMatch(id);
+
+    internal static Task JsonOut(HttpListenerResponse res, int status, JsonNode body, string mime = "application/json; charset=utf-8") => Json(res, status, body, mime);
+
+    internal static Task ErrorOut(HttpListenerResponse res, int status, string message) => Error(res, status, message);
+
+    internal static Task FileOut(HttpListenerRequest req, HttpListenerResponse res, string? file) => SendFile(req, res, file);
 
     static async Task SendFile(HttpListenerRequest req, HttpListenerResponse res, string? file, string? etag = null, string? download = null)
     {
