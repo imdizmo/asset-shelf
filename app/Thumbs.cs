@@ -39,6 +39,11 @@ public static class Thumbs
             var watch = System.Diagnostics.Stopwatch.StartNew();
             try
             {
+                if (!File.Exists(path))
+                {
+                    await Team.EnsureAsync(path).ConfigureAwait(false);  // a team library's picture, fetched on first sight
+                }
+
                 await using FileStream f = File.OpenRead(path);
                 bmp = Bitmap.DecodeToWidth(f, width);
             }

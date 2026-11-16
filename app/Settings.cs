@@ -30,6 +30,10 @@ public sealed class Settings
 
     public string ShareUser { get; set; } = "";
 
+    /// <summary>The team server (host or host:port, see <see cref="AssetShelf.Team"/>). Null: not chosen here, so
+    /// JATIFY_TEAM from the Launcher decides; empty: offline by choice.</summary>
+    public string? Team { get; set; }
+
     /// <summary>The tools/ folder beside the app (a release) or above the build output (the repo). Found on every start
     /// and never saved: an AppImage runs from a mount point that changes each time, and a "Tools" entry an older version
     /// saved in settings.json could point at an old copy.</summary>

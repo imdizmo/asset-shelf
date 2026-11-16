@@ -319,6 +319,7 @@ public sealed class MainWindow : Window
         Button file = _fileMenu = Menu("File", "Reload the library, pick the Unreal project, quit.",
             ("Reload library", "Ctrl+R", () => _ = ReloadAsync()),
             ("Connect to a shared library…", null, () => _ = ConnectAsync()),
+            ("Team server…", null, () => _ = TeamServerAsync()),
             ("Unreal project…", null, () => _ = PickProjectAsync()),
             ("Sign in to Epic…", null, () => _ = SignInAsync()),
             ("Sync Fab library…", null, () => _ = SyncAsync()),
@@ -493,7 +494,7 @@ public sealed class MainWindow : Window
 
     private bool _reloading;
 
-    private async Task ReloadAsync()
+    internal async Task ReloadAsync()
     {
         if (_reloading)
         {
@@ -507,10 +508,15 @@ public sealed class MainWindow : Window
         {
             using (Log.Time("library", "reload (Ctrl+R)"))
             {
+                var (packs, index) = await TeamLibraryAsync(progress) ?? (_settings.Packs, _settings.Index);
                 _lib = await Task.Run(() =>
                 {
-                    Shared.Reconnect(_settings);
-                    return Library.Load(_settings.Packs, _settings.Index, progress);
+                    if (Team.Base is null)
+                    {
+                        Shared.Reconnect(_settings);
+                    }
+
+                    return Library.Load(packs, index, progress);
                 });
             }
         }
@@ -529,7 +535,7 @@ public sealed class MainWindow : Window
         _packsView.OriginFlag = p => OriginOf(p) switch { { Unknown: true } => "Unknown origin", { Licence: true } => "Licence not saved", _ => p.Provenance is { Acquired.How: "bought", Receipts.Count: 0 } ? "No receipt" : null };
         _libraryCaption.Text = $"{_lib.Items.Count:N0} assets · {_lib.Packs.Count} packs ({_lib.Packs.Count(p => p.Indexed)} indexed)";
         // member mode: a library this user cannot change (a share they only read) is synced and indexed by its owner
-        bool member = !Shared.Writable(_settings.Index);
+        bool member = Team.Base is not null || !Shared.Writable(_settings.Index);
         _member = member;
 
         foreach (MenuItem mi in ((MenuFlyout)_fileMenu.Flyout!).Items.OfType<MenuItem>().Where(m => m.Header is string h && (h.StartsWith("Sync", StringComparison.Ordinal) || h.StartsWith("Sign in", StringComparison.Ordinal))))
@@ -537,7 +543,12 @@ public sealed class MainWindow : Window
             mi.IsVisible = !member;
         }
 
-        _status.Text = _lib.Packs.Count == 0 ? $"No indexes in {_settings.Index}" : member ? "Ready · a shared library, read-only: its owner syncs it" : "Ready";
+        _status.Text = Team.Who is { } who ? $"Ready · team library as {who.Name} ({who.Role})"
+            : _lib.Packs.Count == 0 ? $"No indexes in {_settings.Index}" : member ? "Ready · a shared library, read-only: its owner syncs it" : "Ready";
+        if (_teamNote is { } note)
+        {
+            _status.Text += $" · {note}";
+        }
         _picked = null;
         _history.Clear();  // places point at the old library's objects
         _at = -1;
@@ -1952,6 +1963,11 @@ public sealed class MainWindow : Window
             }
         }
 
+        if (!await FetchAsync(all))
+        {
+            return;
+        }
+
         _toUnreal.IsEnabled = false;
         string project = _settings.UnrealProject;
         try
@@ -2001,6 +2017,11 @@ public sealed class MainWindow : Window
 
     private async Task SpinAsync(Item item, Border box, Button button)
     {
+        if (!await FetchAsync([item]))
+        {
+            return;
+        }
+
         string blenderDir = Path.Combine(Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(_settings.Tools))!, "blender");
         button.IsEnabled = false;
         _status.Text = $"{item.Name}: rendering a turntable{(item.Raw ? "" : " (exporting through Unreal first)")}…";
@@ -2040,6 +2061,11 @@ public sealed class MainWindow : Window
 
     private async Task OpenInBlenderAsync(Item item, Button button)
     {
+        if (!await FetchAsync([item]))
+        {
+            return;
+        }
+
         string blenderDir = Path.Combine(Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(_settings.Tools))!, "blender");
         button.IsEnabled = false;
         try
@@ -2074,6 +2100,11 @@ public sealed class MainWindow : Window
     {
         List<Item> targets = Targets();
         if (targets.Count == 0)
+        {
+            return;
+        }
+
+        if (!await FetchAsync(targets))
         {
             return;
         }
@@ -2125,6 +2156,11 @@ public sealed class MainWindow : Window
         if (targets.Count == 0)
         {
             _status.Text = "Send to Groundwork takes meshes";
+            return;
+        }
+
+        if (!await FetchAsync(targets))
+        {
             return;
         }
 
@@ -2340,6 +2376,11 @@ public sealed class MainWindow : Window
             return;
         }
 
+        if (!await FetchAsync(targets))
+        {
+            return;
+        }
+
         string blenderDir = Path.Combine(Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(_settings.Tools))!, "blender");
         _toUnity.IsEnabled = false;
         Busy(targets.Count > 1 ? 0 : null);
@@ -2386,6 +2427,84 @@ public sealed class MainWindow : Window
         text.FontSize = Look.Theme.Caption;
         text.Text = _settings.UnrealProject.Length == 0 ? "No Unreal project: pick one" : $"Unreal: {Path.GetFileName(_settings.UnrealProject.TrimEnd('/'))}";
         Chrome.Tip(_projectButton, (_settings.UnrealProject.Length == 0 ? "" : _settings.UnrealProject + "\n") + "Click to pick the Unreal project assets are sent to.");
+    }
+
+    private string? _teamNote;
+
+    /// <summary>With a team address (settings, else JATIFY_TEAM): asks the team server who we are and mirrors its index.
+    /// Returns the mirror's (packs, index), or null to use the library in settings (offline, or not on the team).</summary>
+    private async Task<(string, string)?> TeamLibraryAsync(IProgress<(int Done, int Total)> progress)
+    {
+        _teamNote = null;
+        Team.Leave();
+        if (Team.Address(_settings) is not { } address)
+        {
+            return null;
+        }
+
+        while (true)
+        {
+            _status.Text = $"Connecting to the team server {address}…";
+            try
+            {
+                Team.Me me = await Team.WhoAmIAsync(address);
+                if (me.Role is null)
+                {
+                    _teamNote = $"Tailscale says you are {me.Login}, not on the team at {address} yet: ask the owner to add you in Questlog (Members > Waiting to join). Working offline.";
+                    return null;
+                }
+
+                Team.Join(address, me);
+                Log.Write("team", $"{address}: {me.Login} ({me.Role})");
+                _status.Text = $"Reading the team library as {me.Name}…";
+                return await Team.SyncIndexAsync(progress);
+            }
+            catch (Exception e) when (e is InvalidOperationException or HttpRequestException or IOException)
+            {
+                Team.Leave();
+                Log.Write("team", e.Message);
+                if (!await Prompt.Confirm(this, "Team server", $"{e.Message} Retry, or cancel to carry on offline with the library on this computer.", "Retry"))
+                {
+                    _teamNote = "working offline";
+                    return null;
+                }
+            }
+        }
+    }
+
+    private async Task TeamServerAsync()
+    {
+        string now = Team.Address(_settings) ?? "";
+        string from = _settings.Team is null && now.Length > 0 ? " (from the Launcher)" : "";
+        if (await Prompt.Ask(this, "Team server", $"The team server's address (host or host:port; port {Team.Port} when none is given){from}. Tailscale tells it who you are. Type off to work offline.", now) is not { } address)
+        {
+            return;
+        }
+
+        _settings.Team = address.Equals("off", StringComparison.OrdinalIgnoreCase) ? "" : address;
+        _settings.Save();
+        await ReloadAsync();
+    }
+
+    /// <summary>For a team library: fetches what these assets need before a send. False (status says why) when it failed.</summary>
+    private async Task<bool> FetchAsync(IEnumerable<Item> items)
+    {
+        if (Team.Base is null)
+        {
+            return true;
+        }
+
+        var all = items.SelectMany(i => Library.Needs(i).Prepend(i)).Distinct().ToList();
+        try
+        {
+            await Team.FetchAsync(all, new Progress<string>(s => _status.Text = s));
+            return true;
+        }
+        catch (Exception e) when (e is InvalidOperationException or HttpRequestException or IOException)
+        {
+            _status.Text = $"Could not fetch from the team library: {e.Message}";
+            return false;
+        }
     }
 
     private async Task ConnectAsync()

@@ -92,6 +92,15 @@ Manager; on Linux the keyring, and the share is mounted with GNOME's gvfs-smb). 
 opens in member mode: Sync and sign-in are hidden, so only the owner syncs and indexes it. The connection is kept as
 `Share` and `ShareUser` in the settings.
 
+### A team library server
+
+On a team whose machines share a [Tailscale](https://tailscale.com) network, the library can be served by
+`server/ShelfServer` instead (see [server/README.md](server/README.md)). Nobody signs in: the server asks Tailscale
+who is connecting and finds them in the team list. Asset Shelf uses the server given by File > Team server…, or by
+`JATIFY_TEAM` (host or host:port, port 8781 by default) when it is started by a launcher. It mirrors the index into
+`~/.cache/asset-shelf/team/<host>`, fetches pictures as they are shown and pack files when an asset is sent, and opens
+in member mode. The same server keeps maps and props that teammates publish from other tools.
+
 ## Library layout
 
 ```

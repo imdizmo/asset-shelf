@@ -44,8 +44,14 @@ public sealed class App : Application
             splash.Show();
             var progress = new Progress<(int Done, int Total)>(p =>
                 splash.Show($"Reading packs  {p.Done:N0} of {p.Total:N0}", p.Total == 0 ? null : 0.9 * p.Done / p.Total));
+            bool team = Team.Address(settings) is not null;  // the main window connects (it can ask to retry)
             _ = Task.Run(() =>
             {
+                if (team)
+                {
+                    return new Library();
+                }
+
                 Shared.Reconnect(settings);
                 return Library.Load(settings.Packs, settings.Index, progress);
             }).ContinueWith(t =>
@@ -68,6 +74,10 @@ public sealed class App : Application
                     desktop.MainWindow = main;
                     main.Show();
                     splash.Close();
+                    if (team)
+                    {
+                        _ = main.ReloadAsync();
+                    }
                     if (debug)
                     {
                         LogWindow.Open(main);
