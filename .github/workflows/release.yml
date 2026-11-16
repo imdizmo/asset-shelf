@@ -30,6 +30,14 @@ jobs:
         run: scripts/package.sh linux-x64 "${{ steps.version.outputs.version }}" dist
       - name: Package for Windows
         run: scripts/package.sh win-x64 "${{ steps.version.outputs.version }}" dist
+      - name: Package the team server
+        # ShelfServer keeps its own version (its .csproj), so apps can tell an old server; on the server: ./update.sh bin/ShelfServer
+        run: |
+          sv=$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' server/ShelfServer/ShelfServer.csproj)
+          n="ShelfServer-$sv-linux-arm64"
+          dotnet publish server/ShelfServer -c Release -r linux-arm64 --self-contained -p:PublishSingleFile=true -p:PublishTrimmed=true -p:DebugType=none -o "dist/$n/bin"
+          cp server/start.sh server/stop.sh server/update.sh server/README.md "dist/$n/"
+          tar -czf "dist/$n.tar.gz" -C dist "$n"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: packages

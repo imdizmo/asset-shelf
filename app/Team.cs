@@ -11,9 +11,74 @@ public static class Team
 {
     public const int Port = 8781;
 
-    public sealed record Me(string Login, string Name, string? Role);
+    public sealed record Me(string Login, string Name, string? Role, string Service = "", string Version = "");
+
+    /// <summary>The oldest ShelfServer this app works fully with (0.2: pictures, versions and delete of maps and props).</summary>
+    public static readonly Version MinServer = new(0, 2, 0);
+
+    /// <summary>A sentence for a person when the team server is older than this app needs (or is not ShelfServer); null when fine.</summary>
+    public static string? Outdated(Me me)
+    {
+        if (me.Service != "shelf")
+        {
+            return $"the team server answers as \"{me.Service}\", not Asset Shelf's library service: check the address and port";
+        }
+
+        return System.Version.TryParse(me.Version.Split('-', '+')[0], out Version? v) && v >= MinServer ? null
+            : $"the team server runs ShelfServer {me.Version}, older than the {MinServer} this app needs: ask the owner to update it (some things, like deleting a map, will not work until then)";
+    }
+
+    public static string Size(long bytes) => bytes < 1 << 20 ? $"{Math.Max(1, bytes >> 10)} KB" : $"{bytes / 1048576.0:0.#} MB";
 
     private sealed record Row(string Id, List<FileRow> Files);
+
+    public sealed record Person(string Login, string Name);
+
+    /// <summary>One version of a map (Groundwork) or prop (Prop Generator) on the team server; Kind is "maps" or "props".</summary>
+    public sealed record Published(string Id, string Name, int Version, long Size, string Sha256, Person PublishedBy, string PublishedAt)
+    {
+        public string Kind { get; init; } = "";
+    }
+
+    /// <summary>True when Tailscale's account may delete what was published (the team's owner or an admin).</summary>
+    public static bool CanDelete => Who?.Role is "owner" or "admin";
+
+    /// <summary>The newest version of every published map and prop.</summary>
+    public static async Task<List<Published>> PublishedAsync()
+    {
+        var all = new List<Published>();
+        foreach (string kind in (string[])["maps", "props"])
+        {
+            all.AddRange((await GetJsonAsync<List<Published>>($"/{kind}")).Where(p => Part(p.Id)).Select(p => p with { Kind = kind }));
+        }
+
+        return all;
+    }
+
+    /// <summary>Every version the server keeps of one map or prop, oldest first.</summary>
+    public static async Task<List<Published>> VersionsAsync(Published p) =>
+        [.. (await GetJsonAsync<System.Text.Json.Nodes.JsonObject>($"/{p.Kind}/{Esc(p.Id)}"))["versions"]!.AsArray()
+            .Select(v => v.Deserialize<Published>(Json)! with { Kind = p.Kind })];
+
+    /// <summary>Deletes one version, or (null) all of them. Owner and admin only; the server checks.</summary>
+    public static async Task DeleteAsync(Published p, int? version)
+    {
+        using HttpResponseMessage r = await Http.DeleteAsync($"{Base}/{p.Kind}/{Esc(p.Id)}" + (version is { } v ? $"?version={v}" : ""));
+        if (!r.IsSuccessStatusCode)
+        {
+            throw new InvalidOperationException(await ErrorOf(r));
+        }
+    }
+
+    /// <summary>Saves the zip into <paramref name="folder"/> as &lt;name&gt; v&lt;n&gt;.zip; returns its path.</summary>
+    public static async Task<string> SaveAsync(Published p, string folder)
+    {
+        string safe = string.Concat(p.Name.Select(c => Path.GetInvalidFileNameChars().Contains(c) || c is '/' or '\\' or ':' ? '_' : c)).Trim('.', ' ');
+        string file = Path.Combine(folder, $"{(safe.Length > 0 ? safe : p.Id)} v{p.Version}.zip");
+        await DownloadAsync($"/{p.Kind}/{Esc(p.Id)}/pack?version={p.Version}", file, null, default);
+        return file;
+    }
+
 
     private sealed record FileRow(string Name, long Size, long Mtime);
 
@@ -104,6 +169,21 @@ public static class Team
         if (Base is null || File.Exists(path))
         {
             return File.Exists(path);
+        }
+
+        string pub = Path.GetRelativePath(Path.Combine(Mirror, "published"), path);
+        if (pub.Split(Path.DirectorySeparatorChar) is [var kind and ("maps" or "props"), var id, var pic] && Part(id)
+            && pic.StartsWith("picture-", StringComparison.Ordinal) && int.TryParse(pic[8..^4], out int version))
+        {
+            try
+            {
+                await DownloadAsync($"/{kind}/{Esc(id)}/picture?version={version}", path, null, default);
+                return true;
+            }
+            catch (Exception e) when (e is HttpRequestException or IOException or InvalidOperationException)
+            {
+                return false;  // most maps have no picture
+            }
         }
 
         string rel = Path.GetRelativePath(Path.Combine(Mirror, "index"), path);
@@ -259,6 +339,41 @@ public static class Team
 
             size -= f.Length;
             f.Delete();
+        }
+    }
+}
+
+public sealed partial class Library
+{
+    /// <summary>Adds what teammates published as two packs, "Team maps" and "Team props".</summary>
+    public void AddPublished(IReadOnlyList<Team.Published> published)
+    {
+        foreach (var (kind, title, itemKind, cls) in new[] { ("maps", "Team maps", "Map", "Groundwork map"), ("props", "Team props", "Prop", "Prop Generator prop") })
+        {
+            string dir = System.IO.Path.Combine(Team.Mirror, "published", kind);
+            var pack = new Pack { Id = $"team-{kind}", Title = title, Licence = "Team", Published = true, Indexed = true, FilesDir = dir, IndexDir = dir, Tags = ["team"] };
+            foreach (Team.Published p in published.Where(p => p.Kind == kind))
+            {
+                var item = new Item
+                {
+                    Pack = pack,
+                    Path = p.Id,
+                    Package = $"team:{kind}/{p.Id}",
+                    Name = p.Name,
+                    Class = cls,
+                    Kind = itemKind,
+                    Thumb = System.IO.Path.Combine(dir, p.Id, $"picture-{p.Version}.img"),
+                    Published = p,
+                };
+                AddTags(item);
+                item.Tags.Add(p.PublishedBy.Name);
+                item.SearchText += $" {p.PublishedBy.Name} {p.PublishedBy.Login}".ToLowerInvariant();
+                pack.ByPackage[item.Package] = item;
+                pack.AssetCount++;
+                Items.Add(item);
+            }
+
+            Packs.Add(pack);
         }
     }
 }

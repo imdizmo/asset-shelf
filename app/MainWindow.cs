@@ -23,7 +23,7 @@ public sealed class MainWindow : Window
     private static readonly (string Kind, string Plural)[] TabKinds =
     [
         ("Mesh", "Meshes"), ("Character", "Characters"), ("Animation", "Animations"), ("VFX", "Effects"), ("Sound", "Sounds"),
-        ("Blueprint", "Blueprints"), ("Map", "Maps"), ("Material", "Materials"), ("Texture", "Textures"), ("Other", "Other"),
+        ("Blueprint", "Blueprints"), ("Map", "Maps"), ("Prop", "Props"), ("Material", "Materials"), ("Texture", "Textures"), ("Other", "Other"),
     ];
 
     private readonly Settings _settings;
@@ -509,6 +509,19 @@ public sealed class MainWindow : Window
             using (Log.Time("library", "reload (Ctrl+R)"))
             {
                 var (packs, index) = await TeamLibraryAsync(progress) ?? (_settings.Packs, _settings.Index);
+                List<Team.Published> published = [];
+                if (Team.Base is not null)
+                {
+                    try
+                    {
+                        published = await Team.PublishedAsync();
+                    }
+                    catch (Exception e) when (e is InvalidOperationException or HttpRequestException)
+                    {
+                        _teamNote = $"team maps and props not read: {e.Message}";
+                    }
+                }
+
                 _lib = await Task.Run(() =>
                 {
                     if (Team.Base is null)
@@ -516,7 +529,13 @@ public sealed class MainWindow : Window
                         Shared.Reconnect(_settings);
                     }
 
-                    return Library.Load(packs, index, progress);
+                    Library lib = Library.Load(packs, index, progress);
+                    if (Team.Base is not null)
+                    {
+                        lib.AddPublished(published);
+                    }
+
+                    return lib;
                 });
             }
         }
@@ -913,6 +932,11 @@ public sealed class MainWindow : Window
 
     private (bool Unknown, bool Licence, bool Receipt) OriginOf(Pack p)
     {
+        if (p.Published)
+        {
+            return default;  // the team's own maps and props: no store origin to record
+        }
+
         if (!_originOf.TryGetValue(p.Id, out var o))
         {
             o = (Provenance.UnknownOrigin(p.Provenance), Provenance.LicenceNotSaved(p.Provenance, p.IndexDir, LibraryRoot), Provenance.NoReceipt(p.Provenance));
@@ -1033,7 +1057,8 @@ public sealed class MainWindow : Window
         {
             var img = new Image { Width = Side, Height = Side, Stretch = Stretch.Uniform };
             Thumbs.Bind(img, item.Thumb);
-            inner = img;
+            // a published map or prop may have no picture: its kind's icon shows until one covers it
+            inner = item.Published is null ? img : new Panel { Children = { new Icon(KindIcon(item.Kind), 28) { Foreground = Look.Theme.TextTertiary, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center }, img } };
         }
 
         var frame = new Border { Width = Side, Height = Side, CornerRadius = new CornerRadius(Look.Tokens.RSm), ClipToBounds = true, Background = Look.Theme.SurfaceSunken, Child = inner, BorderThickness = new Thickness(2), BorderBrush = Brushes.Transparent };
@@ -1399,7 +1424,7 @@ public sealed class MainWindow : Window
     }
 
     /// <summary>The assets a send acts on: the selection, or the picked one.</summary>
-    private List<Item> Targets() => _selected.Count > 1 ? [.. _shown.Where(_selected.Contains)] : _picked is { } p ? [p] : [];
+    private List<Item> Targets() => _selected.Count > 1 ? [.. _shown.Where(i => _selected.Contains(i) && i.Published is null)] : _picked is { Published: null } p ? [p] : [];
 
     private Border? _sendBox;
 
@@ -1500,10 +1525,11 @@ public sealed class MainWindow : Window
         using var step = Log.Time("details", item is null ? "cleared" : $"{item.Name} ({item.Class}, {item.Pack.Id})");
         _details.Children.Clear();
         _extras = [];
-        _toUnreal.IsEnabled = item is { Raw: false };
-        _toBlender.IsEnabled = item is not null && (item.Raw || item.Kind is "Mesh" or "Character" or "Animation");
-        _toUnity.IsEnabled = item is not null && (item.Raw || item.Kind is "Mesh" or "Character");
-        _toGroundwork.IsEnabled = item is not null && (item.Raw || item.Kind == "Mesh");
+        bool asset = item is { Published: null };
+        _toUnreal.IsEnabled = asset && item is { Raw: false };
+        _toBlender.IsEnabled = asset && (item!.Raw || item.Kind is "Mesh" or "Character" or "Animation");
+        _toUnity.IsEnabled = asset && (item!.Raw || item.Kind is "Mesh" or "Character");
+        _toGroundwork.IsEnabled = asset && (item!.Raw || item.Kind == "Mesh");
         UpdateSend();
         if (item is null)
         {
@@ -1549,6 +1575,11 @@ public sealed class MainWindow : Window
 
         var pictureBox = new Border { Margin = new Thickness(10, 10, 10, 6), Height = 300, CornerRadius = new CornerRadius(Look.Theme.Radius3), ClipToBounds = true, Background = Look.Theme.SurfaceSunken, Child = big };
         _details.Children.Add(pictureBox);
+        if (item.Published is { } published)
+        {
+            PublishedDetails(item, published);
+            return;
+        }
         if (item.Raw || item.Kind is "Mesh" or "Character")
         {
             Button spin = Chrome.IconTextButton("rotate-ccw", "Spin in 3D", "Turn the model round: rendered once by Blender (an Unreal asset is exported first), then drag to turn it.");
@@ -2431,6 +2462,105 @@ public sealed class MainWindow : Window
 
     private string? _teamNote;
 
+    /// <summary>The details of a map or prop on the team server: who published it, its versions, Save and Delete.</summary>
+    private void PublishedDetails(Item item, Team.Published p)
+    {
+        string tool = p.Kind == "maps" ? "Groundwork" : "Prop Generator";
+        Button save = Chrome.IconTextButton("download", "Save the zip…", $"Download this version's zip into your Downloads folder. {tool} opens it from its own team list.");
+        save.HorizontalAlignment = HorizontalAlignment.Stretch;
+        save.Margin = new Thickness(10, 0, 10, 10);
+        save.Click += async (_, _) =>
+        {
+            save.IsEnabled = false;
+            try
+            {
+                string downloads = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads");
+                Directory.CreateDirectory(downloads);
+                _status.Text = $"{p.Name}: downloading {Team.Size(p.Size)}…";
+                string file = await Team.SaveAsync(p, downloads);
+                _status.Text = $"{p.Name}: saved as {file}";
+            }
+            catch (Exception e) when (e is InvalidOperationException or HttpRequestException or IOException)
+            {
+                _status.Text = $"{p.Name}: {e.Message}";
+            }
+            finally
+            {
+                save.IsEnabled = true;
+            }
+        };
+        _details.Children.Add(save);
+
+        var about = new FoldGroup("About");
+        about.Body.Children.Add(InfoRow("Published by", p.PublishedBy.Name));
+        about.Body.Children.Add(InfoRow("On", DateTime.TryParse(p.PublishedAt, null, System.Globalization.DateTimeStyles.RoundtripKind, out DateTime at) ? at.ToLocalTime().ToString("d MMM yyyy, HH:mm") : p.PublishedAt));
+        about.Body.Children.Add(InfoRow("Version", $"{p.Version}"));
+        about.Body.Children.Add(InfoRow("Size", $"{Team.Size(p.Size)}"));
+        about.Body.Children.Add(InfoRow("From", tool));
+        _details.Children.Add(about);
+
+        var versions = new FoldGroup("Versions");
+        _details.Children.Add(versions);
+        _ = FillVersionsAsync();
+
+        async Task FillVersionsAsync()
+        {
+            List<Team.Published> all;
+            try
+            {
+                all = await Team.VersionsAsync(p);
+            }
+            catch (Exception e) when (e is InvalidOperationException or HttpRequestException)
+            {
+                versions.Body.Children.Add(new TextBlock { Text = e.Message, FontSize = Look.Theme.Caption, Foreground = Look.Theme.TextTertiary, TextWrapping = TextWrapping.Wrap });
+                return;
+            }
+
+            foreach (Team.Published v in Enumerable.Reverse(all))
+            {
+                Control value = new TextBlock { Text = $"{v.PublishedBy.Name}, {Team.Size(v.Size)}", FontSize = Look.Theme.Label, Foreground = Look.Theme.TextSecondary, VerticalAlignment = VerticalAlignment.Center };
+                if (Team.CanDelete && all.Count > 1)
+                {
+                    Button del = Chrome.IconButton("trash-2", $"Delete version {v.Version} from the team server.");
+                    del.Click += async (_, _) => await DeletePublishedAsync(v, v.Version);
+                    value = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Children = { value, del } };
+                }
+
+                versions.Body.Children.Add(InfoRow($"v{v.Version}", value));
+            }
+        }
+
+        if (Team.CanDelete)
+        {
+            Button delete = Chrome.TextButton("Delete from the team…", $"Remove {p.Name} and every version of it from the team server. Copies people already have are kept.");
+            delete.HorizontalAlignment = HorizontalAlignment.Left;
+            delete.Margin = new Thickness(10, 6, 10, 10);
+            delete.Click += async (_, _) => await DeletePublishedAsync(p, null);
+            _details.Children.Add(delete);
+        }
+    }
+
+    private async Task DeletePublishedAsync(Team.Published p, int? version)
+    {
+        string what = version is { } v ? $"version {v} of {p.Name}" : $"{p.Name} and all its versions";
+        if (!await Prompt.Confirm(this, "Delete from the team", $"Delete {what} from the team server? Nobody on the team can fetch it afterwards; copies people already have are kept.", "Delete"))
+        {
+            return;
+        }
+
+        try
+        {
+            await Team.DeleteAsync(p, version);
+            Log.Write("team", $"deleted {p.Kind}/{p.Id}{(version is { } n ? $" version {n}" : "")}");
+            _status.Text = $"Deleted {what}";
+            await ReloadAsync();
+        }
+        catch (Exception e) when (e is InvalidOperationException or HttpRequestException)
+        {
+            _status.Text = $"Could not delete {what}: {e.Message}";
+        }
+    }
+
     /// <summary>With a team address (settings, else JATIFY_TEAM): asks the team server who we are and mirrors its index.
     /// Returns the mirror's (packs, index), or null to use the library in settings (offline, or not on the team).</summary>
     private async Task<(string, string)?> TeamLibraryAsync(IProgress<(int Done, int Total)> progress)
@@ -2455,7 +2585,12 @@ public sealed class MainWindow : Window
                 }
 
                 Team.Join(address, me);
-                Log.Write("team", $"{address}: {me.Login} ({me.Role})");
+                Log.Write("team", $"{address}: {me.Login} ({me.Role}), server {me.Service} {me.Version}");
+                if (Team.Outdated(me) is { } old)
+                {
+                    _teamNote = old;
+                }
+
                 _status.Text = $"Reading the team library as {me.Name}…";
                 return await Team.SyncIndexAsync(progress);
             }

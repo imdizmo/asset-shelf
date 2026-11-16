@@ -37,7 +37,22 @@ want "$(code "$u/maps/abc/pack?version=1")" 200 download-v1
 etag=$(curl -sI $u/maps/abc/pack | tr -d '\r' | sed -n 's/^ETag: //Ip')
 want "$(code -H "If-None-Match: $etag" $u/maps/abc/pack)" 304 etag
 ls -a "$s/store/maps/abc" | grep -q upload && { echo "FAIL leftover upload"; exit 1; }
+want "$(code $u/maps/abc)" 200 versions; grep -q '"version":1' "$s/out"
+python3 -I -c 'import zipfile,sys; z=zipfile.ZipFile(sys.argv[1],"w"); z.writestr("p/picture.png","PNGDATA"); z.writestr("p/prop.propgen","{}")' "$s/p.zip"
+want "$(code -X PUT --data-binary @"$s/p.zip" "$u/props/p1?name=Crate")" 201 prop
+want "$(code $u/props/p1/picture)" 200 picture; [[ "$(cat "$s/out")" == PNGDATA ]]
+want "$(code $u/maps/abc/picture)" 404 no-picture
+want "$(code -X DELETE $u/maps/abc)" 403 member-cannot-delete
 kill $pid; wait $pid 2>/dev/null || true
+echo '{"version":1,"members":[{"login":"boss@x","name":"Boss","role":"admin"}]}' > "$s/team2.json"; cp "$s/team.json" "$s/team1.json"; cp "$s/team2.json" "$s/team.json"
+start boss@x
+want "$(code -X DELETE "$u/maps/abc?version=1")" 200 delete-version; grep -q '"versionsLeft":1' "$s/out"
+want "$(code "$u/maps/abc/pack?version=1")" 404 version-gone
+want "$(code -X DELETE "$u/maps/abc?version=9")" 404 delete-missing
+want "$(code -X DELETE $u/maps/abc)" 200 delete-all
+want "$(code $u/maps)" 200 list-empty; [[ "$(cat "$s/out")" == "[]" ]]
+kill $pid; wait $pid 2>/dev/null || true
+cp "$s/team1.json" "$s/team.json"
 start obs@x
 want "$(code -X PUT --data-binary @"$s/z.zip" "$u/props/p1")" 403 observer
 want "$(code $u/props)" 200 observer-read

@@ -24,6 +24,9 @@ props teammates publish (zips, kept as they are sent). It recognises callers by 
 | `GET /maps`, `GET /props` | the newest version of each: `[ { id, name, version, size, sha256, publishedBy: { login, name }, publishedAt } ]` |
 | `PUT /maps/{id}?name=…` (or `/props/…`) | the zip as the body; `If-Match: <version>` refuses (409) when someone published since. 201 new, 200 new version |
 | `GET /maps/{id}/pack[?version=n]` | the zip, `ETag: "<sha256>"` |
+| `GET /maps/{id}` | `{ id, versions: [ rows as above, oldest first ] }` |
+| `GET /maps/{id}/picture[?version=n]` | `picture.png` (or `thumbnail`, `preview`, `cover`; `.png` or `.jpg`) from inside the zip, at most one folder deep; 404 when there is none |
+| `DELETE /maps/{id}[?version=n]` | owner and admin only: one version, or all of them |
 
 Ids are 1–64 of `A–Z a–z 0–9 - _`. An upload is kept only once all of it has arrived and its zip directory reads;
 the newest 5 versions are kept. Mtimes are Unix milliseconds. Links and hidden files in the library are never served.
@@ -50,8 +53,18 @@ this with a real git-lfs).
 ```sh
 server/test.sh                                  # the check: every route, on loopback
 server/test-lfs.sh                              # git-lfs push, clone, lock and unlock against it
-server/deploy.sh <ssh-host>:<folder>            # build for linux-arm64 (or pass a rid) and copy it there
+server/deploy.sh <ssh-host>:<folder>            # build for linux-arm64 (or pass a rid), copy it there, restart it
 ```
+
+A release carries `ShelfServer-<version>-linux-arm64.tar.gz`. To update a running server, unpack it anywhere and run
+`./update.sh <unpacked>/bin/ShelfServer` in the server's folder: it stops the server, keeps the old program as
+`bin/ShelfServer.old`, and starts the new one. `data/` and `shelf.env` are kept. `GET /team/whoami` reports the
+version, and the app says when the server is older than it needs.
+
+Backups: copy `data/` and `shelf.env`. A copy can be made while the server runs. LFS objects never change once
+written. Uploads land in hidden `.upload-*` files and `meta.json`/`locks.json` are replaced by a rename, so skip
+dot-files. Something published during the copy can be caught with its new `meta.json` but without its zip. Stop the
+server for the copy (or snapshot the volume) when that matters.
 
 On the server, write `<folder>/shelf.env` once (`SHELF_LISTEN`, `SHELF_LIBRARY`, `SHELF_TEAM_FILE`; see `start.sh`),
 then `./start.sh` and `./stop.sh`. Options: `--max-upload <bytes>` (4 GiB), `--tailscale-socket <path>`.

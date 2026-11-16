@@ -30,6 +30,12 @@ public static partial class Server
     public static async Task<int> Main(string[] args)
     {
         string listen = "";
+        if (args is ["--version"])
+        {
+            Console.WriteLine(Version);
+            return 0;
+        }
+
         for (int i = 0; i + 1 < args.Length; i += 2)
         {
             switch (args[i])
@@ -165,6 +171,27 @@ public static partial class Server
                 else
                 {
                     await Publish(req, res, k2, id, who);
+                }
+            }
+            else if (get && seg is [var k4, var id4] && Kinds.Contains(k4))
+            {
+                Entry? e = IdRule().IsMatch(id4) ? Load(k4, id4) : null;
+                await (e is null ? Error(res, 404, "Nothing has been published under this id.")
+                    : Json(res, 200, new JsonObject { ["id"] = id4, ["versions"] = new JsonArray([.. e.Versions.Select(v => (JsonNode)e.Row(v!))]) }));
+            }
+            else if (get && seg is [var k5, var id5, "picture"] && Kinds.Contains(k5))
+            {
+                await SendPicture(req, res, k5, id5);
+            }
+            else if (req.HttpMethod == "DELETE" && seg is [var k6, var id6] && Kinds.Contains(k6))
+            {
+                if (role is not ("owner" or "admin"))
+                {
+                    await Error(res, 403, "Only the team's owner or an admin can delete what was published.");
+                }
+                else
+                {
+                    await Delete(req, res, k6, id6, who);
                 }
             }
             else if (get && seg is [var k3, var id3, "pack"] && Kinds.Contains(k3))
@@ -511,14 +538,9 @@ public static partial class Server
     {
         public JsonArray Versions => Meta["versions"]!.AsArray();
         public int Latest => Versions.Count == 0 ? 0 : Versions[^1]!["version"]!.GetValue<int>();
-        public JsonObject Newest
-        {
-            get
-            {
-                JsonObject v = Versions[^1]!.AsObject();
-                return new JsonObject { ["id"] = Meta["id"]!.GetValue<string>(), ["name"] = v["name"]!.GetValue<string>(), ["version"] = v["version"]!.GetValue<int>(), ["size"] = v["size"]!.GetValue<long>(), ["sha256"] = v["sha256"]!.GetValue<string>(), ["publishedBy"] = v["publishedBy"]!.DeepClone(), ["publishedAt"] = v["publishedAt"]!.GetValue<string>() };
-            }
-        }
+        public JsonObject Newest => Row(Versions[^1]!);
+
+        public JsonObject Row(JsonNode v) => new() { ["id"] = Meta["id"]!.GetValue<string>(), ["name"] = v["name"]!.GetValue<string>(), ["version"] = v["version"]!.GetValue<int>(), ["size"] = v["size"]!.GetValue<long>(), ["sha256"] = v["sha256"]!.GetValue<string>(), ["publishedBy"] = v["publishedBy"]!.DeepClone(), ["publishedAt"] = v["publishedAt"]!.GetValue<string>() };
     }
 
     static string Folder(string kind, string id) => Path.Combine(_store, kind, id);
@@ -653,6 +675,72 @@ public static partial class Server
         {
             return false;
         }
+    }
+
+    static readonly string[] PictureNames = ["picture.png", "picture.jpg", "thumbnail.png", "thumbnail.jpg", "preview.png", "preview.jpg", "cover.png", "cover.jpg"];
+
+    /// <summary>The picture inside a published zip (picture.png and the like, at most one folder deep, up to 8 MB).</summary>
+    static async Task SendPicture(HttpListenerRequest req, HttpListenerResponse res, string kind, string id)
+    {
+        Entry? e = IdRule().IsMatch(id) ? Load(kind, id) : null;
+        string? want = req.QueryString["version"];
+        JsonNode? v = e?.Versions.LastOrDefault(x => want is null || x!["version"]!.ToString() == want);
+        string? zip = v is null ? null : Path.Combine(Folder(kind, id), $"{v["version"]}.zip");
+        using var z = zip is not null && File.Exists(zip) ? System.IO.Compression.ZipFile.OpenRead(zip) : null;
+        var entry = z?.Entries.Where(x => x.FullName.Count(c => c == '/') <= 1 && x.Length <= 8 << 20 && PictureNames.Contains(x.Name.ToLowerInvariant()))
+            .OrderBy(x => Array.IndexOf(PictureNames, x.Name.ToLowerInvariant())).FirstOrDefault();
+        if (entry is null)
+        {
+            await Error(res, 404, "This has no picture.");
+            return;
+        }
+
+        res.StatusCode = 200;
+        res.ContentType = entry.Name.EndsWith(".png", StringComparison.OrdinalIgnoreCase) ? "image/png" : "image/jpeg";
+        res.ContentLength64 = entry.Length;
+        res.Headers["ETag"] = $"\"{v!["sha256"]}\"";
+        await using Stream s = entry.Open();
+        await s.CopyToAsync(res.OutputStream);
+    }
+
+    /// <summary>DELETE /{kind}/{id}: all of it; ?version=n: that version only (the last one going takes the id with it).</summary>
+    static async Task Delete(HttpListenerRequest req, HttpListenerResponse res, string kind, string id, Who who)
+    {
+        string? want = req.QueryString["version"];
+        string? error = null;
+        int left = 0;
+        lock (PublishGate)
+        {
+            Entry? e = IdRule().IsMatch(id) ? Load(kind, id) : null;
+            JsonNode? v = e?.Versions.FirstOrDefault(x => x!["version"]!.ToString() == want);
+            string dir = Folder(kind, id);
+            if (e is null || (want is not null && v is null))
+            {
+                error = e is null ? "Nothing has been published under this id." : "This version is not kept on the server.";
+            }
+            else if (want is null || e.Versions.Count == 1)
+            {
+                Directory.Delete(dir, recursive: true);
+            }
+            else
+            {
+                e.Versions.Remove(v);
+                string tmp = Path.Combine(dir, ".meta.json.tmp");
+                File.WriteAllText(tmp, e.Meta.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+                File.Move(tmp, Path.Combine(dir, "meta.json"), overwrite: true);
+                File.Delete(Path.Combine(dir, $"{want}.zip"));
+                left = e.Versions.Count;
+            }
+        }
+
+        if (error is not null)
+        {
+            await Error(res, 404, error);
+            return;
+        }
+
+        Console.WriteLine($"{DateTime.UtcNow:O} {who.Login} deleted {kind}/{id}{(want is null ? "" : $" version {want}")}");
+        await Json(res, 200, new JsonObject { ["id"] = id, ["deleted"] = want is null ? "all" : want, ["versionsLeft"] = left });
     }
 
     static async Task SendPublished(HttpListenerRequest req, HttpListenerResponse res, string kind, string id)

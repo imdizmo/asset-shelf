@@ -22,6 +22,9 @@ public sealed class Pack
     public string? Engine { get; set; }
     public int AssetCount { get; set; }
     public IReadOnlyList<string> Tags { get; init; } = [];
+
+    /// <summary>True for "Team maps" and "Team props": what teammates published to the team server, not a store pack.</summary>
+    public bool Published { get; init; }
     public required string FilesDir { get; init; }
     public required string IndexDir { get; init; }
 
@@ -47,6 +50,9 @@ public sealed class Item
     public HashSet<string> Tags { get; } = new(StringComparer.OrdinalIgnoreCase);
     public string SearchText { get; set; } = "";
 
+    /// <summary>A map or prop on the team server (see <see cref="Team"/>); null for a pack's asset.</summary>
+    public Team.Published? Published { get; init; }
+
     /// <summary>The same asset in other packs (same kind, name, triangles, vertices and size); empty for most.</summary>
     public List<Item> Twins { get; } = [];
 }
@@ -55,8 +61,8 @@ public sealed class Item
 public sealed partial class Library
 {
     /// <summary>Kinds in grid order. The first ones are shown by default; materials, textures and the rest on demand.</summary>
-    public static readonly string[] Kinds = ["Mesh", "Character", "Animation", "VFX", "Sound", "Blueprint", "Map", "Material", "Texture", "Other"];
-    public static readonly HashSet<string> DefaultKinds = ["Mesh", "Character", "Animation", "VFX", "Sound", "Blueprint", "Map"];
+    public static readonly string[] Kinds = ["Mesh", "Character", "Animation", "VFX", "Sound", "Blueprint", "Map", "Prop", "Material", "Texture", "Other"];
+    public static readonly HashSet<string> DefaultKinds = ["Mesh", "Character", "Animation", "VFX", "Sound", "Blueprint", "Map", "Prop"];
 
     public List<Pack> Packs { get; } = [];
     public List<Item> Items { get; } = [];
