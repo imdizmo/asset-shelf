@@ -26,20 +26,14 @@ jobs:
         run: |
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then v="$GITHUB_REF_NAME"; else v="v0.0.0-ci.$GITHUB_RUN_NUMBER"; fi
           echo "version=$v" >> "$GITHUB_OUTPUT"
-      - name: Release notes from the changelogs
-        # a tag without its own section in CHANGELOG.md (and the server's in server/CHANGELOG.md) does not publish
+      - name: Release notes from the changelog
+        # a tag without its own section in CHANGELOG.md does not publish
         run: |
           v="${{ steps.version.outputs.version }}"; v="${v#v}"
-          section() { awk -v h="## [$2]" 'index($0, h) == 1 {on = 1; next} on && /^## \[/ {exit} on' "$1"; }
-          mkdir -p dist
-          app=$(section CHANGELOG.md "$v")
-          sv=$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' server/ShelfServer/ShelfServer.csproj)
-          server=$(section server/CHANGELOG.md "$sv")
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            [[ -n "${app//[[:space:]]/}" ]] || { echo "::error::CHANGELOG.md has no section ## [$v]"; exit 1; }
-            [[ -n "${server//[[:space:]]/}" ]] || { echo "::error::server/CHANGELOG.md has no section ## [$sv]"; exit 1; }
+          awk -v h="## [$v]" 'index($0, h) == 1 {on = 1; next} on && /^## \[/ {exit} on' CHANGELOG.md > release-notes.md
+          if [[ "$GITHUB_REF" == refs/tags/v* && -z "$(tr -d '[:space:]' < release-notes.md)" ]]; then
+            echo "::error::CHANGELOG.md has no section ## [$v]"; exit 1
           fi
-          { echo "$app"; echo; echo "## ShelfServer $sv (for whoever runs the team server)"; echo "$server" | sed 's/^### /#### /'; } > release-notes.md
           cat release-notes.md
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
@@ -50,22 +44,6 @@ jobs:
         run: scripts/package.sh linux-x64 "${{ steps.version.outputs.version }}" dist
       - name: Package for Windows
         run: scripts/package.sh win-x64 "${{ steps.version.outputs.version }}" dist
-      - name: Package the team server
-        # ShelfServer keeps its own version (its .csproj), so apps can tell an old server. Linux: run start.sh, update
-        # with update.sh; Windows: run bin\ShelfServer.exe (a launcher does). Built for each platform a team might use.
-        run: |
-          sv=$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' server/ShelfServer/ShelfServer.csproj)
-          for rid in linux-arm64 linux-x64 win-x64; do
-            n="ShelfServer-$sv-$rid"
-            dotnet publish server/ShelfServer -c Release -r "$rid" --self-contained -p:PublishSingleFile=true -p:PublishTrimmed=true -p:DebugType=none -o "dist/$n/bin"
-            cp server/README.md server/CHANGELOG.md "dist/$n/"
-            if [[ "$rid" == win-* ]]; then
-              (cd dist && zip -qr "$n.zip" "$n")
-            else
-              cp server/start.sh server/stop.sh server/update.sh "dist/$n/"
-              tar -czf "dist/$n.tar.gz" -C dist "$n"
-            fi
-          done
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: packages
