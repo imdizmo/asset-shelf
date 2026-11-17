@@ -130,9 +130,15 @@ public static class CrashReport
         return $"memory: {me.WorkingSet64 >> 20} MB now, {me.PeakWorkingSet64 >> 20} MB at most, cap {Cap() ?? "none found"}";
     }
 
-    /// <summary>The memory cap this process runs under, when the system says (Linux cgroup v2 memory.max).</summary>
+    /// <summary>The memory cap this process runs under: the one the Jatify Launcher applied (JATIFY_MEMORY_MAX, bytes),
+    /// else Linux's cgroup v2 memory.max; null when neither says.</summary>
     private static string? Cap()
     {
+        if (long.TryParse(Environment.GetEnvironmentVariable("JATIFY_MEMORY_MAX"), out long given) && given > 0)
+        {
+            return $"{given >> 20} MB (from the Launcher)";
+        }
+
         try
         {
             if (OperatingSystem.IsLinux() && File.ReadAllLines("/proc/self/cgroup").FirstOrDefault(l => l.StartsWith("0::", StringComparison.Ordinal)) is { } line
