@@ -22,6 +22,8 @@ public static class CrashReport
     private static long _written;
     private static string? _marker;
     private static Timer? _memory;
+    private static bool _failed;
+    private static IDisposable? _term;  // kept alive: the registration ends when it is collected
 
     private static string Dir => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".cache", "asset-shelf", "runs");
 
@@ -73,6 +75,9 @@ public static class CrashReport
             }
         };
         AppDomain.CurrentDomain.UnhandledException += (_, e) => Failed("unhandled error", e.ExceptionObject as Exception);
+        // asked to stop (closing the window, or SIGTERM from systemctl stop) is a clean end; a crash is not
+        AppDomain.CurrentDomain.ProcessExit += (_, _) => Stop();
+        _term = System.Runtime.InteropServices.PosixSignalRegistration.Create(System.Runtime.InteropServices.PosixSignal.SIGTERM, _ => Stop());
         Dispatcher.UIThread.UnhandledException += (_, e) => Failed("unhandled error on the UI thread", e.Exception);
         TaskScheduler.UnobservedTaskException += (_, e) => Log.Write("error", $"unobserved task error: {e.Exception.GetBaseException()}");
         _memory = new Timer(_ => Log.Write("memory", MemoryText()), null, TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(5));
@@ -82,7 +87,7 @@ public static class CrashReport
     public static void Stop()
     {
         _memory?.Dispose();
-        if (_marker is not null)
+        if (_marker is not null && !_failed)
         {
             File.Delete(_marker);
         }
@@ -90,6 +95,7 @@ public static class CrashReport
 
     private static void Failed(string what, Exception? e)
     {
+        _failed = true;
         Log.Write("crash", $"{what}: {e}");
         Log.Write("crash", MemoryText());
     }
