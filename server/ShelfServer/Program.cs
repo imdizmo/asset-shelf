@@ -23,6 +23,9 @@ public static partial class Server
 {
     static readonly string Version = typeof(Server).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion.Split('+')[0] ?? "0.0.0";
     static readonly string[] Kinds = ["maps", "props"];
+
+    /// <summary>The team server release this runs from (JATIFY_TEAM_SERVER, set by its manifest and compose file); null otherwise.</summary>
+    static readonly string? TeamServer = Environment.GetEnvironmentVariable("JATIFY_TEAM_SERVER") is { Length: > 0 } t ? t : null;
     static readonly HashSet<string> Roles = ["owner", "admin", "member", "observer"];
     const int KeepVersions = 5;
 
@@ -115,6 +118,7 @@ public static partial class Server
         });
         var app = builder.Build();
         app.Run(ctx => Handle(new Req(ctx), new Res(ctx)));
+        app.Lifetime.ApplicationStarted.Register(() => Console.WriteLine($"SHELF_LISTENING {at.Port}"));
         Console.WriteLine($"{DateTime.UtcNow:O} ShelfServer {Version} on http://{at}/ library={(_library.Length > 0 ? _library : "(none)")} store={_store} team={_teamFile} hosts={string.Join(",", Hosts.Order())}");
         await app.RunAsync();
         return 0;
@@ -133,6 +137,13 @@ public static partial class Server
         Who? who = null;
         try
         {
+            if (req.HttpMethod is "GET" or "HEAD" && req.Url.AbsolutePath == "/healthz")
+            {
+                // up or not, for a launcher or a container's health check: says nothing else, needs no name or person
+                await Text(res, 200, "ok");
+                return;
+            }
+
             if (!Hosts.Contains(req.Host))
             {
                 await Error(res, 421, $"This server answers only at its own address ({string.Join(", ", Hosts.Order())}).");
@@ -149,7 +160,7 @@ public static partial class Server
             }
             else if (get && seg is ["team", "whoami"])
             {
-                await Json(res, 200, new JsonObject { ["login"] = who.Login, ["name"] = who.Name, ["role"] = role, ["service"] = "shelf", ["version"] = Version });
+                await Json(res, 200, new JsonObject { ["login"] = who.Login, ["name"] = who.Name, ["role"] = role, ["service"] = "shelf", ["version"] = Version, ["teamServer"] = TeamServer });
             }
             else if (role is null)
             {
@@ -294,6 +305,15 @@ public static partial class Server
         byte[] b = Encoding.UTF8.GetBytes(body.ToJsonString());
         res.StatusCode = status;
         res.ContentType = mime;
+        res.ContentLength64 = b.Length;
+        await res.OutputStream.WriteAsync(b);
+    }
+
+    static async Task Text(Res res, int status, string message)
+    {
+        byte[] b = Encoding.UTF8.GetBytes(message + "\n");
+        res.StatusCode = status;
+        res.ContentType = "text/plain; charset=utf-8";
         res.ContentLength64 = b.Length;
         await res.OutputStream.WriteAsync(b);
     }
@@ -775,7 +795,7 @@ public static partial class Server
 
             return new JsonObject
             {
-                ["service"] = "shelf", ["version"] = Version, ["port"] = _port, ["started"] = Started.ToString("O"),
+                ["service"] = "shelf", ["version"] = Version, ["teamServer"] = TeamServer, ["port"] = _port, ["started"] = Started.ToString("O"),
                 ["diskFree"] = new DriveInfo(_store).AvailableFreeSpace, ["storage"] = storage,
             };
         }

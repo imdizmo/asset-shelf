@@ -1,6 +1,7 @@
 # ShelfServer changelog
 
 The team's library service (see [README.md](README.md)). Its version is its own, and is reported at `/team/whoami`.
+From 0.5.0 it ships as part of the Jatify team server (imdizmo/jatify-team-server), not with Asset Shelf's releases.
 Before 0.3.0 it was not released as a package. It ran only on the team's own server while it was being built.
 
 ## [0.5.0] - not released yet
@@ -9,6 +10,9 @@ Before 0.3.0 it was not released as a package. It ran only on the team's own ser
   much each area holds (measured in the background). Owners and admins can add, change and remove the team's
   projects (`PUT`/`DELETE /team/projects/<id>`), without editing `projects.json` by hand.
 - `--listen tailscale[:port]` finds this machine's Tailscale address by itself.
+- `/healthz` answers "ok" to anyone, so a launcher or a container can tell the server is up. A line
+  `SHELF_LISTENING <port>` is printed once it listens. `/team/whoami` and `/team/server` name the team server release
+  it came from (`JATIFY_TEAM_SERVER`).
 - **Runs on Windows too** (not tried on a real Windows machine yet). The web server is now ASP.NET Core's Kestrel
   instead of HttpListener, which on Windows needs an administrator's URL reservation. Where Tailscale's daemon socket
   isn't there (Windows, macOS), people are recognised through the `tailscale whois` command.

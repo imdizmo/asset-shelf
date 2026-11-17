@@ -31,7 +31,8 @@ dropped. An optional field that does not check out is left out.
 
 | Request | Answer |
 |---|---|
-| `GET /team/whoami` | `{ login, name, role or null, service: "shelf", version }` |
+| `GET /healthz` | `ok`, to anyone: the server is up |
+| `GET /team/whoami` | `{ login, name, role or null, service: "shelf", version, teamServer }` |
 | `GET /team/projects` | `{ schema: 1, projects: [ { id, name, description, git, lfs (full URL or null), setup, branch?, folder?, memoryMax? } ] }` from `projects.json` beside the team list; members only |
 | `POST /team/crashes?tool=…&version=…&os=…` | a crash report, one zip of at most 20 MB, from any member: `{ id }`. The newest 500 (at most 1 GB) are kept |
 | `GET /team/crashes`, `GET /team/crashes/{id}`, `DELETE /team/crashes/{id}` | owner and admin: the reports, newest first (`{ id, tool, version, os, login, name, at, size }`), one report's zip, and deleting one |

@@ -15,6 +15,8 @@ code() { curl -s -o "$s/out" -w '%{http_code}' "$@"; }
 want() { [[ "$1" == "$2" ]] || { echo "FAIL $3: got $1 want $2: $(cat "$s/out")"; exit 1; }; echo "ok $3"; }
 start me@x
 want "$(code $u/team/whoami)" 200 whoami; grep -q '"role":"member"' "$s/out"
+want "$(code -H "Host: anything.example" $u/healthz)" 200 healthz; [[ "$(cat "$s/out")" == ok ]]
+grep -q "SHELF_LISTENING $port" "$s/log" && echo "ok ready-line"
 want "$(code -H "Host: rebound.example:$port" -X DELETE -H 'X-Jatify: 1' $u/team/projects/game)" 421 other-host-refused
 want "$(code -H "Host: localhost:$port" $u/team/whoami)" 200 localhost-host
 want "$(code $u/team/projects)" 200 projects-none; grep -q '"projects":\[\]' "$s/out"
