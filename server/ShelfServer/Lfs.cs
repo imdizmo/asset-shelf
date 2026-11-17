@@ -19,7 +19,7 @@ public static partial class Lfs
 
     static readonly Lock LockGate = new();
 
-    public static async Task Handle(HttpListenerRequest req, HttpListenerResponse res, string project, string[] rest, Who who, string role)
+    public static async Task Handle(Req req, Res res, string project, string[] rest, Who who, string role)
     {
         if (!Server.ValidId(project))
         {
@@ -69,12 +69,12 @@ public static partial class Lfs
 
     static string ObjectPath(string root, string oid) => Path.Combine(root, "objects", oid[..2], oid[2..4], oid);
 
-    static Task Fail(HttpListenerResponse res, int status, string message) =>
+    static Task Fail(Res res, int status, string message) =>
         Out(res, status, new JsonObject { ["message"] = message, ["error"] = message });
 
-    static Task Out(HttpListenerResponse res, int status, JsonNode body) => Server.JsonOut(res, status, body, Mime);
+    static Task Out(Res res, int status, JsonNode body) => Server.JsonOut(res, status, body, Mime);
 
-    static async Task<JsonNode?> Body(HttpListenerRequest req)
+    static async Task<JsonNode?> Body(Req req)
     {
         // git-lfs's own content type (or plain JSON): a web page can only send text/plain or a form without a preflight
         string type = req.ContentType ?? "";
@@ -94,7 +94,7 @@ public static partial class Lfs
         }
     }
 
-    static async Task Batch(HttpListenerRequest req, HttpListenerResponse res, string project, string root, bool write)
+    static async Task Batch(Req req, Res res, string project, string root, bool write)
     {
         JsonNode? body = await Body(req);
         string? op = body?["operation"]?.GetValue<string>();
@@ -152,7 +152,7 @@ public static partial class Lfs
     }
 
     /// <summary>Streams the object to a hidden file; it becomes visible only when its size and sha256 are the oid's.</summary>
-    static async Task Upload(HttpListenerRequest req, HttpListenerResponse res, string root, string oid)
+    static async Task Upload(Req req, Res res, string root, string oid)
     {
         string file = ObjectPath(root, oid);
         if (File.Exists(file))
@@ -232,7 +232,7 @@ public static partial class Lfs
 
     static JsonObject Public(JsonNode l) => new() { ["id"] = l["id"]!.GetValue<string>(), ["path"] = l["path"]!.GetValue<string>(), ["locked_at"] = l["locked_at"]!.GetValue<string>(), ["owner"] = l["owner"]!.DeepClone() };
 
-    static async Task ListLocks(HttpListenerRequest req, HttpListenerResponse res, string root)
+    static async Task ListLocks(Req req, Res res, string root)
     {
         string? path = req.QueryString["path"], id = req.QueryString["id"];
         JsonArray all;
@@ -246,7 +246,7 @@ public static partial class Lfs
         await Out(res, 200, new JsonObject { ["locks"] = found });
     }
 
-    static async Task VerifyLocks(HttpListenerResponse res, string root, Who who)
+    static async Task VerifyLocks(Res res, string root, Who who)
     {
         JsonArray all;
         lock (LockGate)
@@ -262,7 +262,7 @@ public static partial class Lfs
         });
     }
 
-    static async Task CreateLock(HttpListenerRequest req, HttpListenerResponse res, string root, Who who)
+    static async Task CreateLock(Req req, Res res, string root, Who who)
     {
         string? path = (await Body(req))?["path"]?.GetValue<string>();
         if (path is not { Length: > 0 and <= 1024 })
@@ -294,7 +294,7 @@ public static partial class Lfs
         await Out(res, 201, new JsonObject { ["lock"] = Public(made) });
     }
 
-    static async Task Unlock(HttpListenerRequest req, HttpListenerResponse res, string root, string id, Who who, string role)
+    static async Task Unlock(Req req, Res res, string root, string id, Who who, string role)
     {
         bool force = (await Body(req))?["force"]?.GetValue<bool>() == true;
         JsonNode? l;

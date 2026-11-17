@@ -3,6 +3,9 @@
 // daemon who is behind each connection and looks them up in the team list (team.json, written by Questlog).
 // See README.md beside this file for the API and how to run it.
 using System.Collections.Concurrent;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.Extensions.Logging;
 using System.Net;
 using System.Net.Sockets;
 using System.Reflection;
@@ -29,7 +32,7 @@ public static partial class Server
 
     public static async Task<int> Main(string[] args)
     {
-        string listen = "";
+        string listen = "", hosts = Environment.GetEnvironmentVariable("SHELF_HOSTS") ?? "";
         if (args is ["--version"])
         {
             Console.WriteLine(Version);
@@ -46,6 +49,7 @@ public static partial class Server
                 case "--team": _teamFile = args[i + 1]; break;
                 case "--max-upload": _maxUpload = long.Parse(args[i + 1]); break;
                 case "--tailscale-socket": _socket = args[i + 1]; break;
+                case "--hosts": hosts = args[i + 1]; break;
                 default: return Usage($"unknown option {args[i]}");
             }
         }
@@ -99,45 +103,42 @@ public static partial class Server
             Console.WriteLine($"{DateTime.UtcNow:O} no team list at {_teamFile} yet: everyone is refused until Questlog writes it");
         }
 
+        await KnowHosts(at, hosts);
         Status.Begin(at.Port);
-        using var listener = new HttpListener();
-        listener.Prefixes.Add($"http://{at}/");
-        listener.Start();
-        Console.WriteLine($"{DateTime.UtcNow:O} ShelfServer {Version} on http://{at}/ library={(_library.Length > 0 ? _library : "(none)")} store={_store} team={_teamFile}");
-        using var gate = new SemaphoreSlim(32);
-        while (true)
+        var builder = WebApplication.CreateSlimBuilder();
+        builder.Logging.ClearProviders();
+        builder.WebHost.ConfigureKestrel(k =>
         {
-            HttpListenerContext ctx = await listener.GetContextAsync();
-            await gate.WaitAsync();
-            _ = Task.Run(async () =>
-            {
-                try
-                {
-                    await Handle(ctx);
-                }
-                finally
-                {
-                    gate.Release();
-                }
-            });
-        }
+            k.Listen(at);
+            k.Limits.MaxRequestBodySize = null;  // each route caps its own uploads (zips, LFS objects, crash reports)
+            k.Limits.MaxConcurrentConnections = 64;
+        });
+        var app = builder.Build();
+        app.Run(ctx => Handle(new Req(ctx), new Res(ctx)));
+        Console.WriteLine($"{DateTime.UtcNow:O} ShelfServer {Version} on http://{at}/ library={(_library.Length > 0 ? _library : "(none)")} store={_store} team={_teamFile} hosts={string.Join(",", Hosts.Order())}");
+        await app.RunAsync();
+        return 0;
     }
 
     static int Usage(string why)
     {
-        Console.Error.WriteLine($"ShelfServer: {why}\nusage: ShelfServer --listen <tailscale-ip>:8781 --store <dir> --team <team.json> [--library <dir with index/ and packs/>] [--max-upload <bytes>] [--tailscale-socket <path>]");
+        Console.Error.WriteLine($"ShelfServer: {why}\nusage: ShelfServer --listen <tailscale-ip>:8781 --store <dir> --team <team.json> [--library <dir with index/ and packs/>] [--max-upload <bytes>] [--tailscale-socket <path>] [--hosts <name[:port],...>]");
         return 2;
     }
 
     // ---- requests ----
 
-    static async Task Handle(HttpListenerContext ctx)
+    static async Task Handle(Req req, Res res)
     {
-        HttpListenerRequest req = ctx.Request;
-        HttpListenerResponse res = ctx.Response;
         Who? who = null;
         try
         {
+            if (!Hosts.Contains(req.Host))
+            {
+                await Error(res, 421, $"This server answers only at its own address ({string.Join(", ", Hosts.Order())}).");
+                return;
+            }
+
             who = await Identify(req.RemoteEndPoint);
             string? role = who is null ? null : Team.RoleOf(who.Login);
             string[] seg = [.. (req.Url!.AbsolutePath).Split('/', StringSplitOptions.RemoveEmptyEntries).Select(Uri.UnescapeDataString)];
@@ -254,37 +255,25 @@ public static partial class Server
                 await Error(res, 404, "There is nothing at this address.");
             }
         }
-        catch (HttpListenerException)
+        catch (Exception) when (req.Context.RequestAborted.IsCancellationRequested)
         {
             // the caller went away
         }
         catch (Exception e)
         {
             Console.Error.WriteLine($"{DateTime.UtcNow:O} {req.HttpMethod} {req.Url?.AbsolutePath}: {e}");
-            try
+            if (!res.HasStarted)
             {
                 await Error(res, 500, "The server failed on this request; its log has the details.");
-            }
-            catch (Exception)
-            {
-                // the response had already started
             }
         }
         finally
         {
             Console.WriteLine($"{DateTime.UtcNow:O} {who?.Login ?? req.RemoteEndPoint.Address.ToString()} {req.HttpMethod} {req.Url?.PathAndQuery} {res.StatusCode}");
-            try
-            {
-                res.Close();
-            }
-            catch (Exception)
-            {
-                // already gone
-            }
         }
     }
 
-    static async Task NotMember(HttpListenerRequest req, HttpListenerResponse res, Who who)
+    static async Task NotMember(Req req, Res res, Who who)
     {
         string msg = $"You are signed in to Tailscale as {who.Login}, but you are not on this team yet. Ask the owner to add you in Questlog (Members > Waiting to join).";
         if (req.AcceptTypes?.Any(t => t.StartsWith("text/html", StringComparison.Ordinal)) == true)
@@ -300,7 +289,7 @@ public static partial class Server
         await Error(res, 403, msg);
     }
 
-    static async Task Json(HttpListenerResponse res, int status, JsonNode body, string mime = "application/json; charset=utf-8")
+    static async Task Json(Res res, int status, JsonNode body, string mime = "application/json; charset=utf-8")
     {
         byte[] b = Encoding.UTF8.GetBytes(body.ToJsonString());
         res.StatusCode = status;
@@ -309,7 +298,7 @@ public static partial class Server
         await res.OutputStream.WriteAsync(b);
     }
 
-    static Task Error(HttpListenerResponse res, int status, string message) => Json(res, status, new JsonObject { ["error"] = message, ["message"] = message });  // "message": what git-lfs shows
+    static Task Error(Res res, int status, string message) => Json(res, status, new JsonObject { ["error"] = message, ["message"] = message });  // "message": what git-lfs shows
 
     // ---- who is calling ----
 
@@ -349,10 +338,21 @@ public static partial class Server
         try
         {
             string addr = ip.AddressFamily == AddressFamily.InterNetworkV6 ? $"[{ip}]:{peer.Port}" : $"{ip}:{peer.Port}";
-            using var r = await Daemon.GetAsync($"http://local-tailscaled.sock/localapi/v0/whois?addr={Uri.EscapeDataString(addr)}");
-            if (r.IsSuccessStatusCode)
+            string? json = null;
+            if (File.Exists(_socket))
             {
-                JsonNode? j = JsonNode.Parse(await r.Content.ReadAsStringAsync());
+                using var r = await Daemon.GetAsync($"http://local-tailscaled.sock/localapi/v0/whois?addr={Uri.EscapeDataString(addr)}");
+                json = r.IsSuccessStatusCode ? await r.Content.ReadAsStringAsync() : null;
+            }
+            else
+            {
+                // no daemon socket here (Windows, macOS): the same answer from the tailscale command
+                json = await WhoisCommand(addr);
+            }
+
+            if (json is not null)
+            {
+                JsonNode? j = JsonNode.Parse(json);
                 bool tagged = j?["Node"]?["Tags"] is JsonArray { Count: > 0 };
                 string? login = j?["UserProfile"]?["LoginName"]?.GetValue<string>();
                 if (!tagged && login is { Length: > 0 } && login != "tagged-devices")
@@ -376,32 +376,87 @@ public static partial class Server
         return who;
     }
 
-    /// <summary>This machine's IPv4 tailnet address: the daemon's local API, else `tailscale ip -4`.</summary>
-    static async Task<string?> TailscaleIp()
+    /// <summary>`tailscale whois --json addr`: null when the command is missing or does not know the address.</summary>
+    static async Task<string?> WhoisCommand(string addr)
     {
         try
         {
-            string json = await Daemon.GetStringAsync("http://local-tailscaled.sock/localapi/v0/status");
-            if (JsonNode.Parse(json)?["Self"]?["TailscaleIPs"] is JsonArray ips && ips.Select(i => i?.GetValue<string>()).FirstOrDefault(i => i is not null && IPAddress.TryParse(i, out IPAddress? a) && a.AddressFamily == AddressFamily.InterNetwork) is { } found)
+            var psi = new System.Diagnostics.ProcessStartInfo("tailscale") { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
+            foreach (string a in (string[])["whois", "--json", addr])
             {
-                return found;
+                psi.ArgumentList.Add(a);
             }
-        }
-        catch (Exception e) when (e is HttpRequestException or SocketException or TaskCanceledException or JsonException or InvalidOperationException)
-        {
-        }
 
+            using var p = System.Diagnostics.Process.Start(psi)!;
+            Task<string> err = p.StandardError.ReadToEndAsync();
+            string output = await p.StandardOutput.ReadToEndAsync();
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            await p.WaitForExitAsync(timeout.Token);
+            _ = await err;
+            return p.ExitCode == 0 ? output : null;
+        }
+        catch (Exception e) when (e is System.ComponentModel.Win32Exception or OperationCanceledException)
+        {
+            Console.Error.WriteLine($"{DateTime.UtcNow:O} tailscale whois: {e.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>This machine's IPv4 tailnet address: the daemon's local API, else `tailscale ip -4`.</summary>
+    static async Task<string?> TailscaleIp() =>
+        (await TailscaleSelf())?["TailscaleIPs"] is JsonArray ips
+            ? ips.Select(i => i?.GetValue<string>()).FirstOrDefault(i => i is not null && IPAddress.TryParse(i, out IPAddress? a) && a.AddressFamily == AddressFamily.InterNetwork)
+            : null;
+
+    /// <summary>This machine as Tailscale sees it ("Self" of the status): the daemon's local API, else `tailscale status --json`.</summary>
+    static async Task<JsonNode?> TailscaleSelf()
+    {
         try
         {
-            var psi = new System.Diagnostics.ProcessStartInfo("tailscale", "ip -4") { RedirectStandardOutput = true, UseShellExecute = false };
+            if (File.Exists(_socket))
+            {
+                return JsonNode.Parse(await Daemon.GetStringAsync("http://local-tailscaled.sock/localapi/v0/status"))?["Self"];
+            }
+
+            var psi = new System.Diagnostics.ProcessStartInfo("tailscale") { RedirectStandardOutput = true, UseShellExecute = false };
+            psi.ArgumentList.Add("status");
+            psi.ArgumentList.Add("--json");
             using var p = System.Diagnostics.Process.Start(psi)!;
-            string first = (await p.StandardOutput.ReadToEndAsync()).Split('\n')[0].Trim();
+            string json = await p.StandardOutput.ReadToEndAsync();
             await p.WaitForExitAsync();
-            return IPAddress.TryParse(first, out IPAddress? a) && a.AddressFamily == AddressFamily.InterNetwork ? first : null;
+            return p.ExitCode == 0 ? JsonNode.Parse(json)?["Self"] : null;
         }
-        catch (System.ComponentModel.Win32Exception)
+        catch (Exception e) when (e is HttpRequestException or SocketException or TaskCanceledException or JsonException or InvalidOperationException or System.ComponentModel.Win32Exception)
         {
             return null;
+        }
+    }
+
+    /// <summary>The names this server answers to (Host header): its listen address, its Tailscale names, --hosts. A
+    /// request naming any other host is refused: a web page whose own domain was pointed at this address (DNS
+    /// rebinding) would otherwise count as same-origin in the browser, and could send what a launcher sends.</summary>
+    static readonly HashSet<string> Hosts = new(StringComparer.OrdinalIgnoreCase);
+
+    static async Task KnowHosts(IPEndPoint at, string extra)
+    {
+        Hosts.Add(at.ToString());
+        if (IPAddress.IsLoopback(at.Address))
+        {
+            Hosts.Add($"localhost:{at.Port}");
+        }
+
+        if (await TailscaleSelf() is { } self)
+        {
+            if (self["DNSName"]?.GetValue<string>()?.TrimEnd('.') is { Length: > 0 } dns)
+            {
+                Hosts.Add($"{dns}:{at.Port}");
+                Hosts.Add($"{dns.Split('.')[0]}:{at.Port}");  // the short MagicDNS name
+            }
+        }
+
+        foreach (string h in extra.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            Hosts.Add(h.Contains(':') ? h : $"{h}:{at.Port}");
         }
     }
 
@@ -730,10 +785,10 @@ public static partial class Server
 
     /// <summary>Writes from the launcher's Server tab: the X-Jatify: 1 header (and JSON for a body), which a web page
     /// on the tailnet cannot send without a preflight this server never answers.</summary>
-    static bool AppWrite(HttpListenerRequest req, bool body) =>
+    static bool AppWrite(Req req, bool body) =>
         req.Headers["X-Jatify"] == "1" && (!body || (req.ContentType ?? "").StartsWith("application/json", StringComparison.OrdinalIgnoreCase));
 
-    static async Task<JsonNode?> JsonBody(HttpListenerRequest req)
+    static async Task<JsonNode?> JsonBody(Req req)
     {
         if (req.ContentLength64 > 1 << 20)
         {
@@ -768,7 +823,7 @@ public static partial class Server
 
     // ---- the library ----
 
-    static async Task LibraryList(HttpListenerResponse res)
+    static async Task LibraryList(Res res)
     {
         if (_library.Length == 0)
         {
@@ -791,7 +846,7 @@ public static partial class Server
         await Json(res, 200, all);
     }
 
-    static async Task PackListing(HttpListenerResponse res, string pack)
+    static async Task PackListing(Res res, string pack)
     {
         string? dir = LibDir("packs", pack);
         if (dir is null)
@@ -802,7 +857,6 @@ public static partial class Server
 
         res.StatusCode = 200;
         res.ContentType = "application/json; charset=utf-8";
-        res.SendChunked = true;
         // written as it is walked: a big pack lists tens of thousands of files
         await using var w = new Utf8JsonWriter(res.OutputStream);
         w.WriteStartArray();
@@ -867,13 +921,13 @@ public static partial class Server
 
     internal static bool ValidId(string id) => IdRule().IsMatch(id);
 
-    internal static Task JsonOut(HttpListenerResponse res, int status, JsonNode body, string mime = "application/json; charset=utf-8") => Json(res, status, body, mime);
+    internal static Task JsonOut(Res res, int status, JsonNode body, string mime = "application/json; charset=utf-8") => Json(res, status, body, mime);
 
-    internal static Task ErrorOut(HttpListenerResponse res, int status, string message) => Error(res, status, message);
+    internal static Task ErrorOut(Res res, int status, string message) => Error(res, status, message);
 
-    internal static Task FileOut(HttpListenerRequest req, HttpListenerResponse res, string? file) => SendFile(req, res, file);
+    internal static Task FileOut(Req req, Res res, string? file) => SendFile(req, res, file);
 
-    static async Task SendFile(HttpListenerRequest req, HttpListenerResponse res, string? file, string? etag = null, string? download = null)
+    static async Task SendFile(Req req, Res res, string? file, string? etag = null, string? download = null)
     {
         if (file is null)
         {
@@ -942,7 +996,7 @@ public static partial class Server
             .Where(d => IdRule().IsMatch(d.Name)).Select(d => Load(kind, d.Name)).OfType<Entry>()
             .OrderByDescending(e => e.Newest["publishedAt"]!.GetValue<string>(), StringComparer.Ordinal);
 
-    static async Task Publish(HttpListenerRequest req, HttpListenerResponse res, string kind, string id, Who who)
+    static async Task Publish(Req req, Res res, string kind, string id, Who who)
     {
         if (!IdRule().IsMatch(id))
         {
@@ -1066,7 +1120,7 @@ public static partial class Server
     static readonly string[] PictureNames = ["picture.png", "picture.jpg", "thumbnail.png", "thumbnail.jpg", "preview.png", "preview.jpg", "cover.png", "cover.jpg"];
 
     /// <summary>The picture inside a published zip (picture.png and the like, at most one folder deep, up to 8 MB).</summary>
-    static async Task SendPicture(HttpListenerRequest req, HttpListenerResponse res, string kind, string id)
+    static async Task SendPicture(Req req, Res res, string kind, string id)
     {
         Entry? e = IdRule().IsMatch(id) ? Load(kind, id) : null;
         string? want = req.QueryString["version"];
@@ -1090,7 +1144,7 @@ public static partial class Server
     }
 
     /// <summary>DELETE /{kind}/{id}: all of it; ?version=n: that version only (the last one going takes the id with it).</summary>
-    static async Task Delete(HttpListenerRequest req, HttpListenerResponse res, string kind, string id, Who who)
+    static async Task Delete(Req req, Res res, string kind, string id, Who who)
     {
         string? want = req.QueryString["version"];
         string? error = null;
@@ -1129,7 +1183,7 @@ public static partial class Server
         await Json(res, 200, new JsonObject { ["id"] = id, ["deleted"] = want is null ? "all" : want, ["versionsLeft"] = left });
     }
 
-    static async Task SendPublished(HttpListenerRequest req, HttpListenerResponse res, string kind, string id)
+    static async Task SendPublished(Req req, Res res, string kind, string id)
     {
         Entry? e = IdRule().IsMatch(id) ? Load(kind, id) : null;
         string? want = req.QueryString["version"];

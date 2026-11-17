@@ -9,12 +9,18 @@ Before 0.3.0 it was not released as a package. It ran only on the team's own ser
   much each area holds (measured in the background). Owners and admins can add, change and remove the team's
   projects (`PUT`/`DELETE /team/projects/<id>`), without editing `projects.json` by hand.
 - `--listen tailscale[:port]` finds this machine's Tailscale address by itself.
+- **Runs on Windows too** (not tried on a real Windows machine yet). The web server is now ASP.NET Core's Kestrel
+  instead of HttpListener, which on Windows needs an administrator's URL reservation. Where Tailscale's daemon socket
+  isn't there (Windows, macOS), people are recognised through the `tailscale whois` command.
 
 ### Fixed
 
 - A web page open on someone's computer in the tailnet could create or remove Git LFS file locks by posting plain
   text. Lock requests must now be JSON, as git-lfs sends them. The new admin changes need an `X-Jatify: 1` header,
   which a web page can't send. Deleting a crash report needs it too.
+- The server answers only at its own names: its Tailscale address and MagicDNS names, plus any given with `--hosts`
+  (or `SHELF_HOSTS`). A web page whose own domain was pointed at the server's address (DNS rebinding) could otherwise
+  have passed for the server itself in the browser.
 
 ## [0.4.1] - 2026-11-17, on the team's own server only
 

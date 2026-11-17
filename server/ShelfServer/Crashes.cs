@@ -26,7 +26,7 @@ public static partial class Crashes
 
     static string Root => Path.Combine(Server.Store, "crashes");
 
-    public static async Task Handle(HttpListenerRequest req, HttpListenerResponse res, string[] rest, Who who, string role)
+    public static async Task Handle(Req req, Res res, string[] rest, Who who, string role)
     {
         bool manager = role is "owner" or "admin";
         switch (req.HttpMethod, rest)
@@ -73,7 +73,7 @@ public static partial class Crashes
         }
     }
 
-    static async Task Receive(HttpListenerRequest req, HttpListenerResponse res, Who who)
+    static async Task Receive(Req req, Res res, Who who)
     {
         string tool = req.QueryString["tool"] ?? "", version = req.QueryString["version"] ?? "", os = req.QueryString["os"] ?? "";
         if (!ToolRule().IsMatch(tool) || !VersionRule().IsMatch(version) || os is not ("windows" or "linux" or "macos"))

@@ -87,4 +87,5 @@ dot-files. Something published during the copy can be caught with its new `meta.
 server for the copy (or snapshot the volume) when that matters.
 
 On the server, write `<folder>/shelf.env` once (`SHELF_LISTEN`, `SHELF_LIBRARY`, `SHELF_TEAM_FILE`; see `start.sh`),
-then `./start.sh` and `./stop.sh`. `--listen tailscale:8781` uses this machine's own Tailscale address. Options: `--max-upload <bytes>` (4 GiB), `--tailscale-socket <path>`.
+then `./start.sh` and `./stop.sh`. `--listen tailscale:8781` uses this machine's own Tailscale address. Options: `--max-upload <bytes>` (4 GiB), `--tailscale-socket <path>`, `--hosts <name[:port],...>` (more names it
+answers to; its address and Tailscale names are known already).
