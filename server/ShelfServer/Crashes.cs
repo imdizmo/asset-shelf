@@ -1,6 +1,7 @@
 // Crash reports from the team's tools: one zip per crash (the crashed run's logs and a little about the machine), sent
-// only after the person clicks Send. Kept in <store>/crashes/<tool>/<UTC time>-<login>.zip with a .json beside it, the
-// oldest dropped past 500 reports or 1 GB. Any team member sends; the owner and admins list and download.
+// only after the person clicks Send. Kept in <store>/crashes/<tool>/<UTC time>-<8 hex of the sender>.zip with a .json
+// beside it (who sent it, tool, version, os), the oldest dropped past 500 reports or 1 GB. Any team member sends; the
+// owner and admins list, download and delete.
 using System.Net;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -39,6 +40,26 @@ public static partial class Crashes
             case ("GET", [var tool, var file]) when manager && IdRule().IsMatch($"{tool}/{file}"):
                 string path = Path.Combine(Root, tool, file);
                 await Server.FileOut(req, res, File.Exists(path) ? path : null);
+                break;
+            case ("DELETE", [var tool, var file]) when manager && IdRule().IsMatch($"{tool}/{file}"):
+                string doomed = Path.Combine(Root, tool, file);
+                if (!File.Exists(doomed))
+                {
+                    await Server.ErrorOut(res, 404, "No such crash report.");
+                    break;
+                }
+
+                lock (Gate)
+                {
+                    File.Delete(doomed);
+                    File.Delete(doomed + ".json");
+                }
+
+                Console.WriteLine($"{DateTime.UtcNow:O} {who.Login} deleted crash report {tool}/{file}");
+                await Server.JsonOut(res, 200, new JsonObject { ["deleted"] = $"{tool}/{file}" });
+                break;
+            case ("DELETE", _) when !manager:
+                await Server.ErrorOut(res, 403, "Only the team's owner or an admin can delete crash reports.");
                 break;
             case ("GET", _):
                 await Server.ErrorOut(res, manager ? 404 : 403, manager ? "No such crash report." : "Only the team's owner or an admin can read crash reports.");
@@ -91,8 +112,8 @@ public static partial class Crashes
                 return;
             }
 
-            string login = Regex.Replace(who.Login, "[^A-Za-z0-9._@-]", "_");
-            login = login[..Math.Min(login.Length, 100)];
+            // the file name carries a short hash of the sender, not their login (an email address); the .json has the login
+            string login = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(who.Login.ToLowerInvariant())))[..8];
             string id;
             lock (Gate)
             {
