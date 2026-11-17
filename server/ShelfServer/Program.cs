@@ -56,9 +56,20 @@ public static partial class Server
             return Usage("--listen, --store and --team (or SHELF_TEAM_FILE) are needed");
         }
 
+        if (listen.StartsWith("tailscale", StringComparison.OrdinalIgnoreCase))
+        {
+            // this machine's own tailnet address, from the Tailscale daemon
+            if (await TailscaleIp() is not { } ip)
+            {
+                return Usage("--listen tailscale: Tailscale did not give this machine's address (is it running and signed in?)");
+            }
+
+            listen = ip + listen["tailscale".Length..];
+        }
+
         if (!IPEndPoint.TryParse(listen, out IPEndPoint? at) || at.AddressFamily != AddressFamily.InterNetwork)
         {
-            return Usage($"--listen takes an IPv4 address and port (got {listen})");
+            return Usage($"--listen takes an IPv4 address and port, or tailscale[:port] (got {listen})");
         }
 
         at.Port = at.Port == 0 ? 8781 : at.Port;
@@ -88,6 +99,7 @@ public static partial class Server
             Console.WriteLine($"{DateTime.UtcNow:O} no team list at {_teamFile} yet: everyone is refused until Questlog writes it");
         }
 
+        Status.Begin(at.Port);
         using var listener = new HttpListener();
         listener.Prefixes.Add($"http://{at}/");
         listener.Start();
@@ -145,6 +157,33 @@ public static partial class Server
             else if (get && seg is ["team", "projects"])
             {
                 await Json(res, 200, new JsonObject { ["schema"] = 1, ["projects"] = Projects.List($"http://{req.Url!.Authority}") });
+            }
+            else if (get && seg is ["team", "server"])
+            {
+                await Json(res, 200, Status.Now());
+            }
+            else if (req.HttpMethod is "PUT" or "DELETE" && seg is ["team", "projects", var pid])
+            {
+                if (role is not ("owner" or "admin"))
+                {
+                    await Error(res, 403, "Only the team's owner or an admin can change the team's projects.");
+                }
+                else if (!AppWrite(req, req.HttpMethod == "PUT"))
+                {
+                    await Error(res, 400, "Changes need the header X-Jatify: 1 (and a JSON body).");
+                }
+                else
+                {
+                    try
+                    {
+                        var (status, answer) = req.HttpMethod == "PUT" ? Projects.Put(pid, await JsonBody(req), $"http://{req.Url!.Authority}", who) : Projects.Delete(pid, who);
+                        await Json(res, status, answer);
+                    }
+                    catch (InvalidOperationException e)
+                    {
+                        await Error(res, 409, e.Message);
+                    }
+                }
             }
             else if (seg is ["team", "crashes", .. var crashRest])
             {
@@ -337,6 +376,35 @@ public static partial class Server
         return who;
     }
 
+    /// <summary>This machine's IPv4 tailnet address: the daemon's local API, else `tailscale ip -4`.</summary>
+    static async Task<string?> TailscaleIp()
+    {
+        try
+        {
+            string json = await Daemon.GetStringAsync("http://local-tailscaled.sock/localapi/v0/status");
+            if (JsonNode.Parse(json)?["Self"]?["TailscaleIPs"] is JsonArray ips && ips.Select(i => i?.GetValue<string>()).FirstOrDefault(i => i is not null && IPAddress.TryParse(i, out IPAddress? a) && a.AddressFamily == AddressFamily.InterNetwork) is { } found)
+            {
+                return found;
+            }
+        }
+        catch (Exception e) when (e is HttpRequestException or SocketException or TaskCanceledException or JsonException or InvalidOperationException)
+        {
+        }
+
+        try
+        {
+            var psi = new System.Diagnostics.ProcessStartInfo("tailscale", "ip -4") { RedirectStandardOutput = true, UseShellExecute = false };
+            using var p = System.Diagnostics.Process.Start(psi)!;
+            string first = (await p.StandardOutput.ReadToEndAsync()).Split('\n')[0].Trim();
+            await p.WaitForExitAsync();
+            return IPAddress.TryParse(first, out IPAddress? a) && a.AddressFamily == AddressFamily.InterNetwork ? first : null;
+        }
+        catch (System.ComponentModel.Win32Exception)
+        {
+            return null;
+        }
+    }
+
     /// <summary>Tailscale's ranges: 100.64.0.0/10 and fd7a:115c:a1e0::/48.</summary>
     public static bool Tailnet(IPAddress ip)
     {
@@ -406,23 +474,81 @@ public static partial class Server
         {
             lock (Gate)
             {
-                DateTime t = System.IO.File.Exists(File) ? System.IO.File.GetLastWriteTimeUtc(File) : default;
-                if (t != _stamp)
-                {
-                    _stamp = t;
-                    _rows = t == default ? [] : Read();
-                }
+                Refresh();
+                return new JsonArray([.. _rows.Select(r => (JsonNode)Shown(r.Row, r.Lfs, server))]);
+            }
+        }
 
-                return new JsonArray([.. _rows.Select(r =>
-                {
-                    var o = (JsonObject)r.Row.DeepClone();
-                    o["lfs"] = r.Lfs is null ? null : $"{server}/lfs/{r.Lfs}";
-                    return (JsonNode)o;
-                })]);
+        static JsonObject Shown(JsonObject row, string? lfs, string server)
+        {
+            var o = (JsonObject)row.DeepClone();
+            o["lfs"] = lfs is null ? null : $"{server}/lfs/{lfs}";
+            return o;
+        }
+
+        static void Refresh()
+        {
+            DateTime t = System.IO.File.Exists(File) ? System.IO.File.GetLastWriteTimeUtc(File) : default;
+            if (t != _stamp)
+            {
+                _stamp = t;
+                _rows = t == default ? [] : Read();
             }
         }
 
         static string Cap(JsonNode? n, int max) => n is JsonValue v && v.TryGetValue(out string? s) ? s.Trim()[..Math.Min(s.Trim().Length, max)] : "";
+
+        /// <summary>One project checked: (row as served, its LFS project name) or the reason it fails. Reading the file,
+        /// a bad optional field is left out; writing (<paramref name="strict"/>), it is refused.</summary>
+        static ((JsonObject Row, string? Lfs)? Ok, string? Error) Check(JsonNode? p, bool strict)
+        {
+            string id = Cap(p?["id"], 64), git = Cap(p?["git"], 500), lfs = Cap(p?["lfs"], 64), setup = Cap(p?["setup"], 200);
+            if (!IdRule().IsMatch(id))
+            {
+                return (null, "id must be 1 to 64 letters, digits, '-' or '_'");
+            }
+
+            if (!GitUrl().IsMatch(git))
+            {
+                return (null, "git must be an https://… or git@host:… address");
+            }
+
+            if (!RepoPath().IsMatch(setup) || setup.Split('/').Contains(".."))
+            {
+                return (null, "setup must be the path of a script inside the repository, like tools/setup.sh");
+            }
+
+            if (strict && lfs.Length > 0 && !IdRule().IsMatch(lfs))
+            {
+                return (null, "lfs must be a project name on this server (letters, digits, '-' or '_')");
+            }
+
+            var row = new JsonObject { ["id"] = id, ["name"] = Cap(p?["name"], 60) is { Length: > 0 } n ? n : id, ["description"] = Cap(p?["description"], 1000), ["git"] = git, ["setup"] = setup };
+            foreach (var (key, max, ok, what) in new (string, int, Func<string, bool>, string)[]
+            {
+                ("branch", 100, b => Branch().IsMatch(b) && !b.Contains(".."), "a branch name"),
+                ("folder", 100, f => Folder().IsMatch(f), "one folder name"),
+                ("memoryMax", 10, m => Memory().IsMatch(m), "a size like 16G"),
+            })
+            {
+                string v = Cap(p?[key], max);
+                if (v.Length == 0)
+                {
+                    continue;
+                }
+
+                if (ok(v))
+                {
+                    row[key] = v;
+                }
+                else if (strict)
+                {
+                    return (null, $"{key} must be {what}");
+                }
+            }
+
+            return ((row, IdRule().IsMatch(lfs) ? lfs : null), null);
+        }
 
         static List<(string, JsonObject, string?)> Read()
         {
@@ -431,31 +557,14 @@ public static partial class Server
             {
                 foreach (JsonNode? p in JsonNode.Parse(System.IO.File.ReadAllText(File))?["projects"]?.AsArray() ?? [])
                 {
-                    string id = Cap(p?["id"], 64), git = Cap(p?["git"], 500), lfs = Cap(p?["lfs"], 64), setup = Cap(p?["setup"], 200);
-                    if (!IdRule().IsMatch(id) || !GitUrl().IsMatch(git) || !RepoPath().IsMatch(setup) || setup.Split('/').Contains(".."))
+                    if (Check(p, strict: false) is ({ } ok, _))
                     {
-                        Console.Error.WriteLine($"{DateTime.UtcNow:O} projects.json: entry {id} left out (it needs an id, a git URL that is https://… or git@host:…, and setup as a path inside the repository)");
-                        continue;
+                        rows.Add((ok.Row["id"]!.GetValue<string>(), ok.Row, ok.Lfs));
                     }
-
-                    var row = new JsonObject { ["id"] = id, ["name"] = Cap(p?["name"], 60) is { Length: > 0 } n ? n : id, ["description"] = Cap(p?["description"], 1000), ["git"] = git, ["setup"] = setup };
-                    // optional: a value that does not check out is left out, and the client's default applies
-                    if (Cap(p?["branch"], 100) is var branch && Branch().IsMatch(branch) && !branch.Contains(".."))
+                    else
                     {
-                        row["branch"] = branch;
+                        Console.Error.WriteLine($"{DateTime.UtcNow:O} projects.json: entry {Cap(p?["id"], 64)} left out ({Check(p, false).Error})");
                     }
-
-                    if (Cap(p?["folder"], 100) is var folder && Folder().IsMatch(folder))
-                    {
-                        row["folder"] = folder;
-                    }
-
-                    if (Cap(p?["memoryMax"], 10) is var mem && Memory().IsMatch(mem))
-                    {
-                        row["memoryMax"] = mem;
-                    }
-
-                    rows.Add((id, row, IdRule().IsMatch(lfs) ? lfs : null));
                 }
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException or JsonException or InvalidOperationException)
@@ -464,6 +573,181 @@ public static partial class Server
             }
 
             return rows;
+        }
+
+        /// <summary>Adds or replaces one project (the id in the path wins). Returns (status, answer).</summary>
+        public static (int, JsonObject) Put(string id, JsonNode? body, string server, Who who)
+        {
+            if (body is not JsonObject o)
+            {
+                return (400, Problem("The body must be one project as a JSON object."));
+            }
+
+            o = (JsonObject)o.DeepClone();
+            o["id"] = id;
+            if (Check(o, strict: true) is not ({ } ok, _))
+            {
+                return (400, Problem($"Not saved: {Check(o, true).Error}."));
+            }
+
+            lock (Gate)
+            {
+                Refresh();
+                bool had = _rows.Any(r => r.Id == id);
+                var stored = (JsonObject)ok.Row.DeepClone();
+                if (ok.Lfs is not null)
+                {
+                    stored["lfs"] = ok.Lfs;
+                }
+
+                Write([.. Raw().Where(p => Cap(p?["id"], 64) != id), stored]);
+                Console.WriteLine($"{DateTime.UtcNow:O} {who.Login} {(had ? "changed" : "added")} project {id}");
+                return (had ? 200 : 201, Shown(ok.Row, ok.Lfs, server));
+            }
+        }
+
+        public static (int, JsonObject) Delete(string id, Who who)
+        {
+            lock (Gate)
+            {
+                Refresh();
+                if (!_rows.Any(r => r.Id == id))
+                {
+                    return (404, Problem("No such project."));
+                }
+
+                Write([.. Raw().Where(p => Cap(p?["id"], 64) != id)]);
+                Console.WriteLine($"{DateTime.UtcNow:O} {who.Login} deleted project {id}");
+                return (200, new JsonObject { ["deleted"] = id });
+            }
+        }
+
+        /// <summary>The file's entries as written, the ones that do not check out included: a save from the launcher
+        /// changes only the project it names, and never drops someone's hand-written entry.</summary>
+        static List<JsonNode> Raw()
+        {
+            try
+            {
+                return System.IO.File.Exists(File) && JsonNode.Parse(System.IO.File.ReadAllText(File))?["projects"] is JsonArray a
+                    ? [.. a.Where(p => p is not null).Select(p => p!.DeepClone())] : [];
+            }
+            catch (JsonException)
+            {
+                throw new InvalidOperationException("projects.json is not valid JSON: fix it by hand before changing projects here.");
+            }
+        }
+
+        /// <summary>projects.json rewritten whole (a temp file, then a rename), then read back as any change is.</summary>
+        static void Write(List<JsonNode> projects)
+        {
+            string tmp = File + ".tmp";
+            System.IO.File.WriteAllText(tmp, new JsonObject { ["version"] = 1, ["projects"] = new JsonArray([.. projects]) }.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+            System.IO.File.Move(tmp, File, overwrite: true);
+            _stamp = default;
+            Refresh();
+        }
+    }
+
+    /// <summary>GET /team/server: this service, when it started, free disk, and how much each area holds. Sizes are
+    /// measured in the background (the store every 10 minutes, the library every 6 hours: walking it is slow on a NAS).</summary>
+    static class Status
+    {
+        static readonly DateTime Started = DateTime.UtcNow;
+        static readonly Lock Gate = new();
+        static readonly Dictionary<string, long> Sizes = [];
+        static DateTime? _measured;
+        static int _port;
+
+        public static void Begin(int port)
+        {
+            _port = port;
+            var t = new Thread(() =>
+            {
+                for (int round = 0; ; round++)
+                {
+                    foreach (string area in new[] { "lfs", "maps", "props", "crashes" })
+                    {
+                        Measure(area, Path.Combine(_store, area));
+                    }
+
+                    if (round % 36 == 0)
+                    {
+                        Measure("packs", _library.Length > 0 ? Path.Combine(_library, "packs") : null);
+                        Measure("index", _library.Length > 0 ? Path.Combine(_library, "index") : null);
+                    }
+
+                    lock (Gate)
+                    {
+                        _measured = DateTime.UtcNow;
+                    }
+
+                    Thread.Sleep(TimeSpan.FromMinutes(10));
+                }
+            })
+            { IsBackground = true, Priority = ThreadPriority.Lowest, Name = "storage sizes" };
+            t.Start();
+        }
+
+        static void Measure(string area, string? dir)
+        {
+            long bytes = 0;
+            if (dir is not null && Directory.Exists(dir))
+            {
+                foreach (FileInfo f in new DirectoryInfo(dir).EnumerateFiles("*", new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true, AttributesToSkip = FileAttributes.ReparsePoint }))
+                {
+                    bytes += f.Length;
+                }
+            }
+
+            lock (Gate)
+            {
+                Sizes[area] = bytes;
+            }
+        }
+
+        public static JsonObject Now()
+        {
+            var storage = new JsonObject();
+            lock (Gate)
+            {
+                foreach (string area in new[] { "packs", "index", "lfs", "maps", "props", "crashes" })
+                {
+                    storage[area] = Sizes.TryGetValue(area, out long b) ? b : null;
+                }
+
+                storage["measuredAt"] = _measured?.ToString("O");
+            }
+
+            return new JsonObject
+            {
+                ["service"] = "shelf", ["version"] = Version, ["port"] = _port, ["started"] = Started.ToString("O"),
+                ["diskFree"] = new DriveInfo(_store).AvailableFreeSpace, ["storage"] = storage,
+            };
+        }
+    }
+
+    static JsonObject Problem(string message) => new() { ["error"] = message, ["message"] = message };
+
+    /// <summary>Writes from the launcher's Server tab: the X-Jatify: 1 header (and JSON for a body), which a web page
+    /// on the tailnet cannot send without a preflight this server never answers.</summary>
+    static bool AppWrite(HttpListenerRequest req, bool body) =>
+        req.Headers["X-Jatify"] == "1" && (!body || (req.ContentType ?? "").StartsWith("application/json", StringComparison.OrdinalIgnoreCase));
+
+    static async Task<JsonNode?> JsonBody(HttpListenerRequest req)
+    {
+        if (req.ContentLength64 > 1 << 20)
+        {
+            return null;
+        }
+
+        using var r = new StreamReader(req.InputStream);
+        try
+        {
+            return JsonNode.Parse(await r.ReadToEndAsync());
+        }
+        catch (JsonException)
+        {
+            return null;
         }
     }
 

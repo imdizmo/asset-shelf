@@ -35,6 +35,8 @@ dropped. An optional field that does not check out is left out.
 | `GET /team/projects` | `{ schema: 1, projects: [ { id, name, description, git, lfs (full URL or null), setup, branch?, folder?, memoryMax? } ] }` from `projects.json` beside the team list; members only |
 | `POST /team/crashes?tool=…&version=…&os=…` | a crash report, one zip of at most 20 MB, from any member: `{ id }`. The newest 500 (at most 1 GB) are kept |
 | `GET /team/crashes`, `GET /team/crashes/{id}`, `DELETE /team/crashes/{id}` | owner and admin: the reports, newest first (`{ id, tool, version, os, login, name, at, size }`), one report's zip, and deleting one |
+| `GET /team/server` | any member: `{ service, version, port, started, diskFree, storage: { packs, index, lfs, maps, props, crashes, measuredAt } }` (bytes; measured in the background) |
+| `PUT /team/projects/{id}`, `DELETE /team/projects/{id}` | owner and admin, with `X-Jatify: 1` (and a JSON body for PUT): add, change or remove a project in `projects.json` |
 | `GET /library` | `[ { id, files: [ { name, size, mtime } ] } ]`: each pack's top index files |
 | `GET /library/{pack}/index/{path}` | a file from `index/{pack}/` |
 | `GET /library/{pack}/files` | `[ { path, size, mtime } ]`: every file of `packs/{pack}/` |
@@ -85,4 +87,4 @@ dot-files. Something published during the copy can be caught with its new `meta.
 server for the copy (or snapshot the volume) when that matters.
 
 On the server, write `<folder>/shelf.env` once (`SHELF_LISTEN`, `SHELF_LIBRARY`, `SHELF_TEAM_FILE`; see `start.sh`),
-then `./start.sh` and `./stop.sh`. Options: `--max-upload <bytes>` (4 GiB), `--tailscale-socket <path>`.
+then `./start.sh` and `./stop.sh`. `--listen tailscale:8781` uses this machine's own Tailscale address. Options: `--max-upload <bytes>` (4 GiB), `--tailscale-socket <path>`.

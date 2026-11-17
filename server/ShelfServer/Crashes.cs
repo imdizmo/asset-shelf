@@ -41,6 +41,9 @@ public static partial class Crashes
                 string path = Path.Combine(Root, tool, file);
                 await Server.FileOut(req, res, File.Exists(path) ? path : null);
                 break;
+            case ("DELETE", _) when manager && req.Headers["X-Jatify"] != "1":
+                await Server.ErrorOut(res, 400, "Changes need the header X-Jatify: 1.");
+                break;
             case ("DELETE", [var tool, var file]) when manager && IdRule().IsMatch($"{tool}/{file}"):
                 string doomed = Path.Combine(Root, tool, file);
                 if (!File.Exists(doomed))

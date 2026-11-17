@@ -3,7 +3,20 @@
 The team's library service (see [README.md](README.md)). Its version is its own, and is reported at `/team/whoami`.
 Before 0.3.0 it was not released as a package. It ran only on the team's own server while it was being built.
 
-## [0.4.1] - not released yet
+## [0.5.0] - not released yet
+
+- **For a launcher's Server tab:** `GET /team/server` shows the server's version, when it started, free disk and how
+  much each area holds (measured in the background). Owners and admins can add, change and remove the team's
+  projects (`PUT`/`DELETE /team/projects/<id>`), without editing `projects.json` by hand.
+- `--listen tailscale[:port]` finds this machine's Tailscale address by itself.
+
+### Fixed
+
+- A web page open on someone's computer in the tailnet could create or remove Git LFS file locks by posting plain
+  text. Lock requests must now be JSON, as git-lfs sends them. The new admin changes need an `X-Jatify: 1` header,
+  which a web page can't send. Deleting a crash report needs it too.
+
+## [0.4.1] - 2026-11-17, on the team's own server only
 
 - The owner and admins can delete a crash report (`DELETE /team/crashes/<id>`).
 - A crash report's file name holds a short code for the sender instead of their login. The login is kept in the

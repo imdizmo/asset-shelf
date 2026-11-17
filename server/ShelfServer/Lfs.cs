@@ -76,7 +76,9 @@ public static partial class Lfs
 
     static async Task<JsonNode?> Body(HttpListenerRequest req)
     {
-        if (req.ContentLength64 > 16 << 20)
+        // git-lfs's own content type (or plain JSON): a web page can only send text/plain or a form without a preflight
+        string type = req.ContentType ?? "";
+        if (req.ContentLength64 > 16 << 20 || !(type.StartsWith(Mime, StringComparison.OrdinalIgnoreCase) || type.StartsWith("application/json", StringComparison.OrdinalIgnoreCase)))
         {
             return null;
         }

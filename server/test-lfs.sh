@@ -29,6 +29,7 @@ git clone -q "$s/remote.git" "$s/b" 2>&1 | grep -v '^$' || true
 cmp Big.uasset "$s/b/Big.uasset" && echo "ok clone"
 git lfs lock Big.uasset >/dev/null && echo "ok lock"
 git lfs locks | grep -q Big.uasset && echo "ok list"
+[[ $(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: text/plain' -d '{"path":"Small.uasset"}' "$url/locks") == 422 ]] && echo "ok a web page cannot lock" || { echo "FAIL text/plain lock accepted"; exit 1; }
 stop; start obs@x
 (cd "$s/b" && git lfs locks | grep -q Big.uasset) && echo "ok observer sees lock"
 (cd "$s/b" && ! git lfs unlock Big.uasset >/dev/null 2>&1) && echo "ok observer cannot unlock"

@@ -61,6 +61,8 @@ want "$(code $u/maps/abc)" 200 versions; grep -q '"version":1' "$s/out"
 want "$(code -X POST --data-binary @"$s/z.zip" "$u/team/crashes?tool=game-tool&version=1.2.3&os=windows")" 201 crash-sent; grep -q '"id":"game-tool/' "$s/out"
 want "$(code $u/team/crashes)" 403 crash-list-member
 want "$(code -X DELETE "$u/team/crashes/game-tool/x.zip")" 403 crash-delete-member
+want "$(code -X PUT -H 'X-Jatify: 1' -H 'Content-Type: application/json' -d '{"git":"https://example.com/n.git","setup":"s.sh"}' "$u/team/projects/m")" 403 project-member
+want "$(code $u/team/server)" 200 server-status-member
 want "$(code -X POST --data-binary @"$s/z.zip" "$u/team/crashes?tool=Bad/Tool&version=1&os=linux")" 400 crash-bad-tool
 want "$(code -X POST --data-binary 'nope' "$u/team/crashes?tool=t&version=1&os=linux")" 400 crash-not-zip
 head -c 21000000 /dev/zero > "$s/huge.zip"
@@ -79,9 +81,23 @@ want "$(code "$u/team/crashes/$cid")" 200 crash-download; cmp -s "$s/out" "$s/z.
 want "$(code "$u/team/crashes/game-tool/..%2f..%2fteam.json")" 404 crash-traversal
 [[ "$cid" =~ ^game-tool/[0-9]{8}-[0-9]{6}-[0-9a-f]{8}\.zip$ ]] && echo "ok crash-name-has-no-login" || { echo "FAIL crash id $cid"; exit 1; }
 grep -q '"login":"me@x"' "$s/store/crashes/$cid.json" && echo "ok crash-login-in-json"
-want "$(code -X DELETE "$u/team/crashes/$cid")" 200 crash-delete
+want "$(code -X DELETE "$u/team/crashes/$cid")" 400 crash-delete-needs-header
+want "$(code -X DELETE -H 'X-Jatify: 1' "$u/team/crashes/$cid")" 200 crash-delete
 [[ ! -e "$s/store/crashes/$cid" && ! -e "$s/store/crashes/$cid.json" ]] && echo "ok crash-deleted-both"
-want "$(code -X DELETE "$u/team/crashes/$cid")" 404 crash-delete-again
+want "$(code -X DELETE -H 'X-Jatify: 1' "$u/team/crashes/$cid")" 404 crash-delete-again
+want "$(code $u/team/server)" 200 server-status; grep -q '"service":"shelf"' "$s/out"; grep -q '"diskFree":' "$s/out"
+J='-H X-Jatify:1 -H Content-Type:application/json'
+want "$(code -X PUT $J -d '{"name":"New","git":"https://example.com/n.git","setup":"s.sh","lfs":"new","memoryMax":"8G"}' "$u/team/projects/newp")" 201 project-add; grep -q '"lfs":"http://127.0.0.1:'$port'/lfs/new"' "$s/out"
+want "$(code -X PUT $J -d '{"name":"New 2","git":"https://example.com/n.git","setup":"s.sh"}' "$u/team/projects/newp")" 200 project-change
+want "$(code -X PUT $J -d '{"git":"https://example.com/n.git","setup":"../s.sh"}' "$u/team/projects/bad")" 400 project-bad-setup; grep -q 'setup must be' "$s/out"
+want "$(code -X PUT $J -d '{"git":"https://example.com/n.git","setup":"s.sh","memoryMax":"lots"}' "$u/team/projects/bad")" 400 project-bad-optional
+want "$(code -X PUT -H 'Content-Type: application/json' -d '{"git":"https://example.com/n.git","setup":"s.sh"}' "$u/team/projects/x")" 400 project-needs-header
+want "$(code -X PUT -H 'X-Jatify: 1' -H 'Content-Type: text/plain' -d '{"git":"https://example.com/n.git","setup":"s.sh"}' "$u/team/projects/x")" 400 project-needs-json
+want "$(code $u/team/projects)" 200 project-list; grep -q '"name":"New 2"' "$s/out"; grep -q '"id":"game"' "$s/out"
+grep -q '"lfs": "game"' "$s/projects.json" && echo "ok project-file-keeps-lfs-name"
+grep -q '"bad id"' "$s/projects.json" && echo "ok project-file-keeps-hand-entries" || { echo "FAIL a hand-written entry was dropped"; exit 1; }
+want "$(code -X DELETE -H 'X-Jatify: 1' "$u/team/projects/newp")" 200 project-delete
+want "$(code -X DELETE -H 'X-Jatify: 1' "$u/team/projects/newp")" 404 project-delete-again
 for i in $(seq 501); do curl -s -o /dev/null -X POST --data-binary @"$s/z.zip" "$u/team/crashes?tool=spam&version=1&os=linux"; done
 [[ $(ls "$s/store/crashes/spam" "$s/store/crashes/game-tool" | grep -c '\.zip$') == 500 ]] && echo "ok crash-store-bounded" || { echo "FAIL crash store not bounded"; exit 1; }
 want "$(code -X DELETE "$u/maps/abc?version=1")" 200 delete-version; grep -q '"versionsLeft":1' "$s/out"
