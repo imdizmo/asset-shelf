@@ -21,6 +21,8 @@ Before 0.3.0 it was not released as a package. It ran only on the team's own ser
 - The server answers only at its own names: its Tailscale address and MagicDNS names, plus any given with `--hosts`
   (or `SHELF_HOSTS`). A web page whose own domain was pointed at the server's address (DNS rebinding) could otherwise
   have passed for the server itself in the browser.
+- JSON requests (project changes, LFS batch and locks) are capped while they are read, also when sent without a
+  length.
 
 ## [0.4.1] - 2026-11-17, on the team's own server only
 

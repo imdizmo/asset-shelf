@@ -78,20 +78,12 @@ public static partial class Lfs
     {
         // git-lfs's own content type (or plain JSON): a web page can only send text/plain or a form without a preflight
         string type = req.ContentType ?? "";
-        if (req.ContentLength64 > 16 << 20 || !(type.StartsWith(Mime, StringComparison.OrdinalIgnoreCase) || type.StartsWith("application/json", StringComparison.OrdinalIgnoreCase)))
+        if (!(type.StartsWith(Mime, StringComparison.OrdinalIgnoreCase) || type.StartsWith("application/json", StringComparison.OrdinalIgnoreCase)))
         {
             return null;
         }
 
-        using var r = new StreamReader(req.InputStream);
-        try
-        {
-            return JsonNode.Parse(await r.ReadToEndAsync());
-        }
-        catch (JsonException)
-        {
-            return null;
-        }
+        return await Server.ReadJson(req, 16 << 20);
     }
 
     static async Task Batch(Req req, Res res, string project, string root, bool write)

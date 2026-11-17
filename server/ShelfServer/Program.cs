@@ -788,17 +788,32 @@ public static partial class Server
     static bool AppWrite(Req req, bool body) =>
         req.Headers["X-Jatify"] == "1" && (!body || (req.ContentType ?? "").StartsWith("application/json", StringComparison.OrdinalIgnoreCase));
 
-    static async Task<JsonNode?> JsonBody(Req req)
+    static Task<JsonNode?> JsonBody(Req req) => ReadJson(req, 1 << 20);
+
+    /// <summary>A JSON body read into memory, at most <paramref name="max"/> bytes counted as they arrive (a body sent
+    /// without a length is capped too); null when larger or not JSON.</summary>
+    internal static async Task<JsonNode?> ReadJson(Req req, int max)
     {
-        if (req.ContentLength64 > 1 << 20)
+        if (req.ContentLength64 > max)
         {
             return null;
         }
 
-        using var r = new StreamReader(req.InputStream);
+        using var buffer = new MemoryStream();
+        byte[] chunk = new byte[16 << 10];
+        for (int got; (got = await req.InputStream.ReadAsync(chunk)) > 0;)
+        {
+            if (buffer.Length + got > max)
+            {
+                return null;
+            }
+
+            buffer.Write(chunk, 0, got);
+        }
+
         try
         {
-            return JsonNode.Parse(await r.ReadToEndAsync());
+            return JsonNode.Parse(buffer.ToArray());
         }
         catch (JsonException)
         {

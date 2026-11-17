@@ -1,0 +1,32 @@
+# ShelfServer on any machine with Docker, reachable only over your tailnet. See README.md beside this file.
+services:
+  tailscale:
+    image: tailscale/tailscale:v1.104.7
+    hostname: shelf                      # the server's name on your tailnet
+    environment:
+      TS_AUTHKEY: ${TS_AUTHKEY}          # a one-off auth key from the Tailscale admin console (.env)
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_SOCKET: /var/run/tailscale/tailscaled.sock
+      TS_USERSPACE: "false"              # real tailnet addresses reach the server, so it can tell who is calling
+    cap_add: [NET_ADMIN]
+    devices: [/dev/net/tun:/dev/net/tun]
+    volumes:
+      - tailscale-state:/var/lib/tailscale
+      - tailscale-socket:/var/run/tailscale
+    restart: unless-stopped
+
+  shelf:
+    image: ghcr.io/imdizmo/shelf-server:latest
+    network_mode: service:tailscale      # shares the tailnet address of the container above
+    depends_on: [tailscale]
+    volumes:
+      - tailscale-socket:/var/run/tailscale:ro
+      - ./data:/data                     # published maps and props, LFS objects, crash reports
+      - ./team:/team                     # team.json (and projects.json)
+      # - /path/to/your/library:/library:ro   # an Asset Shelf library (index/ and packs/), if you share one
+    # command: ["--listen", "tailscale:8781", "--store", "/data", "--team", "/team/team.json", "--library", "/library"]
+    restart: unless-stopped              # it starts again until Tailscale is up
+
+volumes:
+  tailscale-state:
+  tailscale-socket:

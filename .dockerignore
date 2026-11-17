@@ -1,0 +1,6 @@
+# only what server/Dockerfile copies
+*
+!global.json
+!server/ShelfServer/
+server/ShelfServer/bin/
+server/ShelfServer/obj/

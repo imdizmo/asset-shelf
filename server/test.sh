@@ -98,6 +98,8 @@ want "$(code -X PUT -H 'X-Jatify: 1' -H 'Content-Type: text/plain' -d '{"git":"h
 want "$(code $u/team/projects)" 200 project-list; grep -q '"name":"New 2"' "$s/out"; grep -q '"id":"game"' "$s/out"
 grep -q '"lfs": "game"' "$s/projects.json" && echo "ok project-file-keeps-lfs-name"
 grep -q '"bad id"' "$s/projects.json" && echo "ok project-file-keeps-hand-entries" || { echo "FAIL a hand-written entry was dropped"; exit 1; }
+head -c 3000000 /dev/zero | tr '\0' ' ' > "$s/big.json"
+want "$(code -X PUT -H 'X-Jatify: 1' -H 'Content-Type: application/json' -H 'Transfer-Encoding: chunked' --data-binary @"$s/big.json" "$u/team/projects/newp")" 400 project-chunked-too-big
 want "$(code -X DELETE -H 'X-Jatify: 1' "$u/team/projects/newp")" 200 project-delete
 want "$(code -X DELETE -H 'X-Jatify: 1' "$u/team/projects/newp")" 404 project-delete-again
 for i in $(seq 501); do curl -s -o /dev/null -X POST --data-binary @"$s/z.zip" "$u/team/crashes?tool=spam&version=1&os=linux"; done
