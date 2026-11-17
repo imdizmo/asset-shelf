@@ -3,6 +3,12 @@
 The team's library service (see [README.md](README.md)). Its version is its own, and is reported at `/team/whoami`.
 Before 0.3.0 it was not released as a package. It ran only on the team's own server while it was being built.
 
+## [0.4.0] - not released yet
+
+- **Crash reports.** The team's tools can send a crash report (one zip, at most 20 MB) after the person who saw the
+  crash clicks Send. Any team member can send one; the owner and admins list and download them at `/team/crashes`.
+  The newest 500 reports (at most 1 GB) are kept.
+
 ## [0.3.0] - 2026-11-17
 
 First release as a package: `ShelfServer-0.3.0-linux-arm64.tar.gz` (a self-contained program for an ARM64 Linux

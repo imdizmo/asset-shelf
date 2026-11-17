@@ -58,6 +58,12 @@ etag=$(curl -sI $u/maps/abc/pack | tr -d '\r' | sed -n 's/^ETag: //Ip')
 want "$(code -H "If-None-Match: $etag" $u/maps/abc/pack)" 304 etag
 ls -a "$s/store/maps/abc" | grep -q upload && { echo "FAIL leftover upload"; exit 1; }
 want "$(code $u/maps/abc)" 200 versions; grep -q '"version":1' "$s/out"
+want "$(code -X POST --data-binary @"$s/z.zip" "$u/team/crashes?tool=game-tool&version=1.2.3&os=windows")" 201 crash-sent; grep -q '"id":"game-tool/' "$s/out"
+want "$(code $u/team/crashes)" 403 crash-list-member
+want "$(code -X POST --data-binary @"$s/z.zip" "$u/team/crashes?tool=Bad/Tool&version=1&os=linux")" 400 crash-bad-tool
+want "$(code -X POST --data-binary 'nope' "$u/team/crashes?tool=t&version=1&os=linux")" 400 crash-not-zip
+head -c 21000000 /dev/zero > "$s/huge.zip"
+want "$(code -X POST --data-binary @"$s/huge.zip" "$u/team/crashes?tool=t&version=1&os=linux")" 413 crash-too-big
 python3 -I -c 'import zipfile,sys; z=zipfile.ZipFile(sys.argv[1],"w"); z.writestr("p/picture.png","PNGDATA"); z.writestr("p/prop.propgen","{}")' "$s/p.zip"
 want "$(code -X PUT --data-binary @"$s/p.zip" "$u/props/p1?name=Crate")" 201 prop
 want "$(code $u/props/p1/picture)" 200 picture; [[ "$(cat "$s/out")" == PNGDATA ]]
@@ -66,6 +72,12 @@ want "$(code -X DELETE $u/maps/abc)" 403 member-cannot-delete
 kill $pid; wait $pid 2>/dev/null || true
 echo '{"version":1,"members":[{"login":"boss@x","name":"Boss","role":"admin"}]}' > "$s/team2.json"; cp "$s/team.json" "$s/team1.json"; cp "$s/team2.json" "$s/team.json"
 start boss@x
+want "$(code $u/team/crashes)" 200 crash-list-admin; grep -q 'game-tool/' "$s/out"
+cid=$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))[0]["id"])' "$s/out")
+want "$(code "$u/team/crashes/$cid")" 200 crash-download; cmp -s "$s/out" "$s/z.zip"
+want "$(code "$u/team/crashes/game-tool/..%2f..%2fteam.json")" 404 crash-traversal
+for i in $(seq 501); do curl -s -o /dev/null -X POST --data-binary @"$s/z.zip" "$u/team/crashes?tool=spam&version=1&os=linux"; done
+[[ $(ls "$s/store/crashes/spam" "$s/store/crashes/game-tool" | grep -c '\.zip$') == 500 ]] && echo "ok crash-store-bounded" || { echo "FAIL crash store not bounded"; exit 1; }
 want "$(code -X DELETE "$u/maps/abc?version=1")" 200 delete-version; grep -q '"versionsLeft":1' "$s/out"
 want "$(code "$u/maps/abc/pack?version=1")" 404 version-gone
 want "$(code -X DELETE "$u/maps/abc?version=9")" 404 delete-missing

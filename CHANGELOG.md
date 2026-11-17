@@ -5,6 +5,14 @@ own list: [server/CHANGELOG.md](server/CHANGELOG.md). Each release's notes on Gi
 
 Entries before 0.2.0 were written afterwards, from the git history.
 
+## [Unreleased]
+
+### New
+
+- **Crash reports.** If Asset Shelf closed unexpectedly, the next start asks whether to send that run's log to your
+  team's server. You can see exactly what is sent first. Nothing is sent unless you click Send, and nothing is asked
+  when no team server is set. Each run now keeps its log in `~/.cache/asset-shelf/runs` (the last 10 runs).
+
 ## [0.2.0] - 2026-11-17
 
 ### New

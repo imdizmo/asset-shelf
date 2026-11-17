@@ -146,6 +146,10 @@ public static partial class Server
             {
                 await Json(res, 200, new JsonObject { ["schema"] = 1, ["projects"] = Projects.List($"http://{req.Url!.Authority}") });
             }
+            else if (seg is ["team", "crashes", .. var crashRest])
+            {
+                await Crashes.Handle(req, res, crashRest, who, role);
+            }
             else if (get && seg is ["library"])
             {
                 await LibraryList(res);
@@ -572,6 +576,8 @@ public static partial class Server
     }
 
     internal static string Store => _store;
+
+    internal static bool IsWholeZip(string file) => WholeZip(file);
 
     internal static long MaxUpload => _maxUpload;
 

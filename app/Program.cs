@@ -8,8 +8,12 @@ namespace AssetShelf;
 public static class Program
 {
     [STAThread]
-    public static void Main(string[] args) =>
+    public static void Main(string[] args)
+    {
+        CrashReport.Start();
         AppBuilder.Configure<App>().UsePlatformDetect().LogToTrace(Avalonia.Logging.LogEventLevel.Warning).StartWithClassicDesktopLifetime(args);
+        CrashReport.Stop();  // not reached after a crash: the run's marker stays, and the next start offers its report
+    }
 }
 
 public sealed class App : Application
@@ -74,6 +78,7 @@ public sealed class App : Application
                     desktop.MainWindow = main;
                     main.Show();
                     splash.Close();
+                    _ = CrashReport.OfferAsync(main, settings);
                     if (team)
                     {
                         _ = main.ReloadAsync();

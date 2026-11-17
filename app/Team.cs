@@ -120,6 +120,21 @@ public static class Team
         }
     }
 
+    /// <summary>Sends a crash report (a zip) to the team server; returns its id there.</summary>
+    public static async Task<string> SendCrashAsync(string address, string tool, string version, string os, byte[] zip)
+    {
+        using var body = new ByteArrayContent(zip);
+        body.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/zip");
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        using HttpResponseMessage r = await Http.PostAsync($"{Url(address)}/team/crashes?tool={Esc(tool)}&version={Esc(version)}&os={Esc(os)}", body, cts.Token);
+        if (!r.IsSuccessStatusCode)
+        {
+            throw new InvalidOperationException(await ErrorOf(r));
+        }
+
+        return (await r.Content.ReadFromJsonAsync<System.Text.Json.Nodes.JsonObject>(Json, cts.Token))?["id"]?.GetValue<string>() ?? "";
+    }
+
     /// <summary>Uses the team server from now on (until <see cref="Leave"/>).</summary>
     public static void Join(string address, Me me) => (Base, Who) = (Url(address), me);
 

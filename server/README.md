@@ -33,6 +33,8 @@ dropped. An optional field that does not check out is left out.
 |---|---|
 | `GET /team/whoami` | `{ login, name, role or null, service: "shelf", version }` |
 | `GET /team/projects` | `{ schema: 1, projects: [ { id, name, description, git, lfs (full URL or null), setup, branch?, folder?, memoryMax? } ] }` from `projects.json` beside the team list; members only |
+| `POST /team/crashes?tool=…&version=…&os=…` | a crash report, one zip of at most 20 MB, from any member: `{ id }`. The newest 500 (at most 1 GB) are kept |
+| `GET /team/crashes`, `GET /team/crashes/{id}` | owner and admin: the reports, newest first (`{ id, tool, version, os, login, name, at, size }`), and one report's zip |
 | `GET /library` | `[ { id, files: [ { name, size, mtime } ] } ]`: each pack's top index files |
 | `GET /library/{pack}/index/{path}` | a file from `index/{pack}/` |
 | `GET /library/{pack}/files` | `[ { path, size, mtime } ]`: every file of `packs/{pack}/` |
