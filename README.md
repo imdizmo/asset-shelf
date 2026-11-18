@@ -123,7 +123,8 @@ shelf pull <asset id> --to ~/MyUnrealProject --format unreal
 ```
 
 **Search by meaning** ("a person wielding a sword", whatever the files are called) is an add-on, `shelf-meaning`
-(`addons/ShelfMeaning`), installed on its own: it runs Google's SigLIP 2 on this computer (downloaded once, about
+(`addons/ShelfMeaning`, its own download on the release page, `shelf-meaning-<version>-<platform>`),
+installed on its own: it runs Google's SigLIP 2 on this computer (downloaded once, about
 1.5 GB) over each asset's picture. Asset Shelf and `shelf` carry no model and no AI library; with the add-on beside
 `shelf` or on the PATH, `shelf search --meaning "…"` and `--like <asset id>` work, otherwise they say so.
 `shelf-meaning embed --pack <id>` reads a pack's pictures once (vectors kept beside its index).

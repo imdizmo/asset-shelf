@@ -4,7 +4,7 @@ The team's library service (see [README.md](README.md)). Its version is its own,
 From 0.5.0 it ships as part of the Jatify team server (imdizmo/jatify-team-server), not with Asset Shelf's releases.
 Before 0.3.0 it was not released as a package. It ran only on the team's own server while it was being built.
 
-## [0.6.0] - not released yet
+## [0.6.0] - 2026-11-18
 
 - **Playtest logs.** A game can send a playtest log (one gzipped `.playlog` of at most 20 MB, after the player agreed
   twice) to `POST /team/playlogs?game=…&build=…`. The server checks its header and counts its events once on arrival
@@ -17,7 +17,7 @@ Before 0.3.0 it was not released as a package. It ran only on the team's own ser
   `application/gzip` (anything but plain text or a form). A web page open in the tailnet could otherwise post one in
   someone's name. A tool that sent a crash report without a content type gets 415 and has to add it.
 
-## [0.5.0] - not released yet
+## [0.5.0] - 2026-11-18
 
 - **For a launcher's Server tab:** `GET /team/server` shows the server's version, when it started, free disk and how
   much each area holds (measured in the background). Owners and admins can add, change and remove the team's

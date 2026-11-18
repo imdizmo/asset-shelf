@@ -5,7 +5,7 @@ own list: [server/CHANGELOG.md](server/CHANGELOG.md). Each release's notes on Gi
 
 Entries before 0.2.0 were written afterwards, from the git history.
 
-## [Unreleased]
+## [0.3.0] - 2026-11-18
 
 ### New
 
@@ -13,7 +13,7 @@ Entries before 0.2.0 were written afterwards, from the git history.
   conditions, original source, picture), and pull an asset into a project as a model file with its textures, into an
   Unreal project, or as its loose files. Each pull records where it came from and copies the pack's licence text. It
   refuses a pack whose safety scan found code unless you insist. It uses the team library when a team server is set.
-- **Search by meaning, as an add-on:** `shelf-meaning`, installed on its own, finds assets by a description or by
+- **Search by meaning, as an add-on:** `shelf-meaning`, installed on its own (its own download on the release page), finds assets by a description or by
   likeness to another asset, from their pictures, with a model run on this computer. Asset Shelf and `shelf` work
   without it and carry none of its libraries; `shelf search --meaning` uses it when it is there.
 - **A sound browser.** A pack's sounds can be measured from their own audio, no AI involved: length, how loud they
@@ -41,6 +41,11 @@ Entries before 0.2.0 were written afterwards, from the git history.
   where it was first published, which also goes into the project's provenance record when you send it. A new Origin
   filter, "Originals not recorded", shows the packs with assets still missing one. Such sites have been found mixing in
   assets they had no right to, and the original source is what lets you trace and remove one.
+
+### Not tested yet
+
+- **None of this has been tried on real Windows.** The Windows build is made and packaged, but crash reports, `shelf`,
+  the meaning add-on, the sound browser's Play, mesh prep and free sources were tested on Linux only.
 
 ## [0.2.0] - 2026-11-17
 

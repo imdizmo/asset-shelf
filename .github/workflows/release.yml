@@ -44,6 +44,10 @@ jobs:
         run: scripts/package.sh linux-x64 "${{ steps.version.outputs.version }}" dist
       - name: Package for Windows
         run: scripts/package.sh win-x64 "${{ steps.version.outputs.version }}" dist
+      - name: Package the meaning add-on (its own download)
+        run: |
+          scripts/package-meaning.sh linux-x64 "${{ steps.version.outputs.version }}" dist
+          scripts/package-meaning.sh win-x64 "${{ steps.version.outputs.version }}" dist
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: packages
