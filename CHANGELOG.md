@@ -26,6 +26,10 @@ Entries before 0.2.0 were written afterwards, from the git history.
   keeping the shape, make lighter LODs and a collision shape, and export it for Unreal, Godot, Groundwork or Blender.
   A report says what was found and done, and the axes and units used. The asset itself is never changed: everything
   goes into a folder you choose. `shelf prep` does the same. Without Blender the button is not there.
+- **Free assets from Poly Haven and ambientCG** (File > Get free assets…): search a source's catalog, tick what
+  you want, choose the texture resolution, and the ticked assets are downloaded (every file checked), indexed, and
+  filed with where they came from, who made them and their CC0 licence (a copy of the text is kept). An asset already
+  downloaded is marked, and one changed since shows as updated. A pack of texture maps becomes a material in the grid.
 - **A Claude Code skill** (`shelf install-skill`), so a coding agent in a game project finds and pulls assets the same
   way.
 

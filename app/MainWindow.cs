@@ -330,6 +330,8 @@ public sealed class MainWindow : Window
             ("Sync Fab library…", null, () => _ = SyncAsync()),
             ("Sign in to itch.io…", null, () => _ = ItchSignInAsync()),
             ("Sync itch.io library…", null, () => _ = SyncAsync(itch: true)),
+            ("Get free assets from Poly Haven…", null, () => _ = FreeAsync("polyhaven")),
+            ("Get free assets from ambientCG…", null, () => _ = FreeAsync("ambientcg")),
             ("Unity project…", null, () => _ = PickUnityAsync()),
             ("Unity folder…", null, () => _ = UnityFolderAsync()),
             ("Unity: pack's own folders on/off", null, () =>
@@ -562,7 +564,7 @@ public sealed class MainWindow : Window
         bool member = Team.Base is not null || !Shared.Writable(_settings.Index);
         _member = member;
 
-        foreach (MenuItem mi in ((MenuFlyout)_fileMenu.Flyout!).Items.OfType<MenuItem>().Where(m => m.Header is string h && (h.StartsWith("Sync", StringComparison.Ordinal) || h.StartsWith("Sign in", StringComparison.Ordinal))))
+        foreach (MenuItem mi in ((MenuFlyout)_fileMenu.Flyout!).Items.OfType<MenuItem>().Where(m => m.Header is string h && (h.StartsWith("Sync", StringComparison.Ordinal) || h.StartsWith("Sign in", StringComparison.Ordinal) || h.StartsWith("Get free", StringComparison.Ordinal))))
         {
             mi.IsVisible = !member;
         }
@@ -2497,6 +2499,60 @@ public sealed class MainWindow : Window
         string result = "";
         int exit = await FabSync.RunAsync(_settings, "itch_sync.py", ["login", "-"], l => result = l, stdin: k);
         _status.Text = exit == 0 ? $"itch.io: {result}" : $"itch.io sign-in failed: {result}";
+    }
+
+    /// <summary>A free source (Poly Haven, ambientCG): its catalog to pick from, the picked assets downloaded with their
+    /// CC0 provenance, then indexed.</summary>
+    private async Task FreeAsync(string source)
+    {
+        if (_syncing || _member)
+        {
+            _status.Text = _member ? "A shared library is filled by its owner." : "A sync is already running.";
+            return;
+        }
+
+        _syncing = true;
+        string name = FreePicker.Sources.First(s => s.Key == source).Name;
+        string work = Path.Combine(Path.GetDirectoryName(Sender.Outbox())!, "sync-free");
+        Directory.CreateDirectory(work);
+        string catalog = Path.Combine(work, $"{source}.json"), ids = Path.Combine(work, "ids.txt"), changed = Path.Combine(work, "changed.txt");
+        void Status(string l) => Dispatcher.UIThread.Post(() => _status.Text = $"{name}: " + (l.Length > 9 && l[2] == ':' ? l[9..] : l));
+        try
+        {
+            Busy(null);
+            File.Delete(catalog);
+            if (await FabSync.RunAsync(_settings, "free_sync.py", ["catalog", "--source", source, "--out", catalog, "--packs", _settings.Packs], Status) != 0 || !File.Exists(catalog))
+            {
+                _status.Text = $"{name}: the catalog could not be read (see the debug log)";
+                return;
+            }
+
+            Idle();
+            if (await FreePicker.Ask(this, source, catalog) is not var (picked, res) || picked.Count == 0)
+            {
+                _status.Text = $"{name}: nothing downloaded";
+                return;
+            }
+
+            await File.WriteAllLinesAsync(ids, picked);
+            Busy(null);
+            File.Delete(changed);
+            await FabSync.RunAsync(_settings, "free_sync.py", ["download", "--source", source, "--packs", _settings.Packs, "--index", _settings.Index, "--ids", ids, "--res", res, "--changed", changed], Status);
+            string[] slugs = File.Exists(changed) ? File.ReadAllLines(changed).Where(l => l.Length > 0).ToArray() : [];
+            if (slugs.Length > 0)
+            {
+                await FabSync.RunAsync(_settings, "index_library.py", ["--kind", "raw", "--redo", changed, "--order", changed, "--limit", $"{slugs.Length}",
+                    "--packs", _settings.Packs, "--index", _settings.Index], Status, "6G");
+                await ReloadAsync();
+            }
+
+            _status.Text = $"{name}: {slugs.Length} of {picked.Count} downloaded and indexed";
+        }
+        finally
+        {
+            _syncing = false;
+            Idle();
+        }
     }
 
     private async Task SyncAsync(bool itch = false)

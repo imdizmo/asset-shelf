@@ -37,6 +37,28 @@ def one_format(models):
     return sorted(keep)
 
 
+def materials(raw, out, images):
+    """A pack of texture maps and no model (a material from ambientCG or Poly Haven): each folder of maps is one
+    material asset, pictured by the pack's cover when it has one."""
+    by_dir = {}
+    for p in images:
+        by_dir.setdefault(os.path.dirname(p), []).append(p)
+    cover = next((os.path.join(out, c) for c in ('cover.png', 'cover.jpg') if os.path.exists(os.path.join(out, c))), None)
+    found = []
+    for d, maps in sorted(by_dir.items()):
+        rel = os.path.relpath(d, raw)
+        a = {'path': rel, 'package': rel, 'name': os.path.basename(os.path.dirname(raw)) if rel in ('.', 'textures', 'material') else os.path.basename(d),
+             'class': 'Material', 'source': 'raw', 'format': 'maps', 'tags': {'Maps': str(len(maps))}, 'deps': [], 'soft': [], 'refs': []}
+        if cover:
+            name = hashlib.md5(rel.encode()).hexdigest() + os.path.splitext(cover)[1]
+            os.makedirs(os.path.join(out, 'thumbs'), exist_ok=True)
+            with open(cover, 'rb') as src, open(os.path.join(out, 'thumbs', name), 'wb') as dst:
+                dst.write(src.read())
+            a['thumb'] = 'thumbs/' + name
+        found.append(a)
+    return found
+
+
 def main():
     a = argparse.ArgumentParser()
     a.add_argument('--pack', required=True, help='the pack\'s raw folder')
@@ -80,6 +102,10 @@ def main():
             if os.path.exists(j['thumb']):
                 a['thumb'] = 'thumbs/' + os.path.basename(j['thumb'])
         assets.append(a)
+    # a material's own .blend (ambientCG ships one) holds no mesh: it is not a model, and its folder is a material
+    assets = [a for a in assets if 'no meshes' not in a.get('error', '')]
+    if not assets:
+        assets = materials(raw, out, images)
     json.dump({'source': 'raw', 'assets': assets}, open(os.path.join(out, 'index.json'), 'w'), indent=1)
     os.remove(job); os.remove(res)
     print(f'{len(assets)} raw assets, {sum("thumb" in a for a in assets)} pictures ->', out)

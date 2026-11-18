@@ -33,6 +33,8 @@ Status: 0.1, used daily on Linux; Windows and macOS are untested.
   LODs and a collision shape; export for Unreal, Godot, Groundwork or Blender, with a report. The asset is never
   changed.
 - **Spin in 3D.** A turntable rendered once by headless Blender, turned by dragging.
+- **Free sources.** Poly Haven (models and textures; powered by Poly Haven) and ambientCG (materials), all CC0: pick
+  from their catalogs, and the assets come in with their provenance filled in.
 - **Library sync.** Fab (sign in with your Epic account) and itch.io (an API key): what is new or updated, downloaded
   and checked file by file, then indexed. A preview first; nothing is downloaded until you say so.
 - **Debug log** (View > Debug log, Ctrl+Shift+L): every step with its timing.
