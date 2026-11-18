@@ -158,10 +158,10 @@ public static partial class Server
                 return;
             }
 
-            // a page served from this same machine (Questlog's, on its own port) may ask who the person is and send
-            // suggestions from the browser: only these two routes, only for an Origin on one of this server's own host
-            // names, and only suggestions answer a preflight
-            if (((req.Url.AbsolutePath == "/team/suggestions" && req.HttpMethod is "POST" or "OPTIONS") || (req.Url.AbsolutePath == "/team/whoami" && req.HttpMethod == "GET"))
+            // a page served from this same machine (Questlog's, on its own port) may ask who the person is, send
+            // suggestions, and read the library's index and pictures (the Assets tab) from the browser: only for an
+            // Origin on one of this server's own host names at Questlog's port, and only suggestions answer a preflight
+            if (((req.Url.AbsolutePath == "/team/suggestions" && req.HttpMethod is "POST" or "OPTIONS") || (req.HttpMethod == "GET" && PageReadable(req.Url.AbsolutePath)))
                 && SameMachinePage(req) is { } origin)
             {
                 res.Headers["Access-Control-Allow-Origin"] = origin;
@@ -495,6 +495,16 @@ public static partial class Server
     /// request naming any other host is refused: a web page whose own domain was pointed at this address (DNS
     /// rebinding) would otherwise count as same-origin in the browser, and could send what a launcher sends.</summary>
     static readonly HashSet<string> Hosts = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>GET routes Questlog's page may read: whoami, the library's list and index files (pictures, index.json),
+    /// the maps' and props' lists and pictures. Never pack files, zips, crash reports, suggestions or projects.</summary>
+    static bool PageReadable(string path) => path.Split('/', StringSplitOptions.RemoveEmptyEntries) switch
+    {
+        ["team", "whoami"] or ["library"] or ["maps"] or ["props"] => true,
+        ["library", _, "index", _, ..] => true,
+        ["maps" or "props", _, "picture"] => true,
+        _ => false,
+    };
 
     /// <summary>The request's Origin when it is Questlog's page on this machine (http, one of this server's host names,
     /// Questlog's port), else null. Never for reading lists: only whoami and sending a suggestion use it.</summary>
