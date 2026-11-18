@@ -21,6 +21,13 @@ public sealed class Provenance
         public string Site { get; set; } = "";
         public string Url { get; set; } = "";
         public string Creator { get; set; } = "";
+
+        /// <summary>The site collects other people's assets (an aggregator): each asset's own source is worth keeping,
+        /// since such sites have been found mixing in assets they had no right to (other stores', other games').</summary>
+        public bool Aggregator { get; set; }
+
+        /// <summary>For an aggregator's pack: each asset's original source (creator and/or https:// page), by asset path.</summary>
+        public Dictionary<string, string> Originals { get; set; } = [];
     }
 
     public sealed class LicenceInfo
@@ -104,6 +111,18 @@ public sealed class Provenance
 
     /// <summary>No source page: nothing says where the pack came from.</summary>
     public static bool UnknownOrigin(Provenance? p) => p is null || !IsWebLink(p.Source.Url);
+
+    /// <summary>Sites known to collect other people's assets. A pack from one counts as an aggregator's even when not
+    /// marked so. ponytail: a short list kept by hand; add a site when one turns up.</summary>
+    public static readonly string[] KnownAggregators = ["patch.gg"];
+
+    public static bool IsAggregator(Provenance? p) =>
+        p is not null && (p.Source.Aggregator || (Uri.TryCreate(p.Source.Url, UriKind.Absolute, out Uri? u)
+            && KnownAggregators.Any(a => u.Host.Equals(a, StringComparison.OrdinalIgnoreCase) || u.Host.EndsWith("." + a, StringComparison.OrdinalIgnoreCase))));
+
+    /// <summary>An aggregator's pack with an asset whose original source is not recorded.</summary>
+    public static bool OriginalsMissing(Provenance? p, IEnumerable<string> assetPaths) =>
+        IsAggregator(p) && assetPaths.Any(a => !p!.Source.Originals.TryGetValue(a, out string? o) || o.Trim().Length == 0);
 
     /// <summary>No saved licence text that still exists in the library.</summary>
     public static bool LicenceNotSaved(Provenance? p, string indexDir, string libraryRoot) =>
@@ -243,6 +262,7 @@ public sealed class Provenance
         name = item.Name,
         pack = item.Pack.Title,
         source = p?.Source.Url is { Length: > 0 } u ? u : item.Pack.Url,
+        original = p?.Source.Originals.GetValueOrDefault(item.Path) ?? (IsAggregator(p) ? "not recorded" : ""),
         site = p?.Source.Site ?? "",
         creator = p?.Source.Creator is { Length: > 0 } c ? c : item.Pack.Seller,
         licence = p is null ? item.Pack.Licence : string.Join(" ", new[] { p.Licence.Name, p.Licence.Tier }.Where(x => x.Length > 0)),

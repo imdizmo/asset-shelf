@@ -36,6 +36,8 @@ public sealed class OriginDialog : Window
         TextBlock Note(string t) => new() { Text = t, FontSize = Look.Theme.Caption, Foreground = Look.Tokens.Mute, TextWrapping = TextWrapping.Wrap };
 
         TextBox site = Box(p.Source.Site, "Fab, itch.io, Gumroad, the creator's site…"), url = Box(p.Source.Url, "https://…"), creator = Box(p.Source.Creator, "Creator or seller");
+        var aggregator = new CheckBox { Content = "This site collects other people's assets (an aggregator)", IsChecked = p.Source.Aggregator, FontSize = Look.Theme.Label };
+        ToolTip.SetTip(aggregator, "Such sites have been found mixing in assets they had no right to. Each asset then gets its own original source, recorded in its details.");
         TextBox licName = Box(p.Licence.Name, "Licence name (e.g. CC0, Fab Standard License)"), licTier = Box(p.Licence.Tier, "Tier (Personal, Professional…)"), licUrl = Box(p.Licence.Url, "https:// address of the terms (optional)");
         var how = new ComboBox { ItemsSource = Ways, SelectedItem = Ways.Contains(p.Acquired.How) ? p.Acquired.How : "unknown", FontSize = Look.Theme.Body, HorizontalAlignment = HorizontalAlignment.Stretch };
         TextBox date = Box(p.Acquired.Date, "YYYY-MM-DD"), account = Box(p.Acquired.Account, "Store account (kept in the library, not shown elsewhere)");
@@ -132,7 +134,7 @@ public sealed class OriginDialog : Window
                 return;
             }
 
-            p.Source = new Provenance.SourceInfo { Site = (site.Text ?? "").Trim(), Url = u, Creator = (creator.Text ?? "").Trim() };
+            p.Source = new Provenance.SourceInfo { Site = (site.Text ?? "").Trim(), Url = u, Creator = (creator.Text ?? "").Trim(), Aggregator = aggregator.IsChecked == true, Originals = p.Source.Originals };
             p.Licence.Name = (licName.Text ?? "").Trim();
             p.Licence.Tier = (licTier.Text ?? "").Trim();
             p.Licence.Url = Provenance.IsWebLink((licUrl.Text ?? "").Trim()) ? licUrl.Text!.Trim() : "";
@@ -161,7 +163,7 @@ public sealed class OriginDialog : Window
             Children =
             {
                 Note("Where this pack came from and the right to use it. Kept in the library next to its pack.json; receipts and the account are never shown or logged."),
-                Caption("Source page"), url, site, creator,
+                Caption("Source page"), url, site, creator, aggregator,
                 Caption("Licence"), licName, licTier, licUrl, pasted, fromFile, copies,
                 Caption("Acquired"), how, date, account,
                 Caption("Receipt"),

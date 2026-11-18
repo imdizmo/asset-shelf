@@ -12,6 +12,11 @@ Entries before 0.2.0 were written afterwards, from the git history.
 - **Crash reports.** If Asset Shelf closed unexpectedly, the next start asks whether to send that run's log to your
   team's server. You can see exactly what is sent first. Nothing is sent unless you click Send, and nothing is asked
   when no team server is set. Each run now keeps its log in `~/.cache/asset-shelf/runs` (the last 10 runs).
+- **Assets from sites that collect other people's assets.** Mark a pack's site as one in Origin…, or let Asset Shelf
+  recognise a known one. Each of its assets then gets an "Original" field in its details, for the creator and the page
+  where it was first published, which also goes into the project's provenance record when you send it. A new Origin
+  filter, "Originals not recorded", shows the packs with assets still missing one. Such sites have been found mixing in
+  assets they had no right to, and the original source is what lets you trace and remove one.
 
 ## [0.2.0] - 2026-11-17
 

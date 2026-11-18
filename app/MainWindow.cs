@@ -44,7 +44,7 @@ public sealed class MainWindow : Window
     private readonly HashSet<string> _originOn = [];  // unknown, licence, receipt: show only packs with that gap
 
     // per pack: (no source page, no saved licence copy, no receipt), worked out once (file checks on the share)
-    private readonly Dictionary<string, (bool Unknown, bool Licence, bool Receipt)> _originOf = [];
+    private readonly Dictionary<string, (bool Unknown, bool Licence, bool Receipt, bool Originals)> _originOf = [];
     private readonly WrapPanel _activeTags = new() { Margin = new Thickness(8, 8, 8, 2) };
     private readonly HashSet<string> _packOff = [];
     private readonly HashSet<string> _licenceOff = [];
@@ -551,7 +551,7 @@ public sealed class MainWindow : Window
     private void UseLibrary()
     {
         _originOf.Clear();
-        _packsView.OriginFlag = p => OriginOf(p) switch { { Unknown: true } => "Unknown origin", { Licence: true } => "Licence not saved", _ => p.Provenance is { Acquired.How: "bought", Receipts.Count: 0 } ? "No receipt" : null };
+        _packsView.OriginFlag = p => OriginOf(p) switch { { Unknown: true } => "Unknown origin", { Originals: true } => "Originals not recorded", { Licence: true } => "Licence not saved", _ => p.Provenance is { Acquired.How: "bought", Receipts.Count: 0 } ? "No receipt" : null };
         _libraryCaption.Text = $"{_lib.Items.Count:N0} assets · {_lib.Packs.Count} packs ({_lib.Packs.Count(p => p.Indexed)} indexed)";
         // member mode: a library this user cannot change (a share they only read) is synced and indexed by its owner
         bool member = Team.Base is not null || !Shared.Writable(_settings.Index);
@@ -858,11 +858,12 @@ public sealed class MainWindow : Window
         // Origin: the gaps in where packs came from; ticking one shows only the packs with it
         _originGroup.Body.Children.Clear();
         var indexed = _lib.Packs.Where(p => p.Indexed).ToList();
-        foreach (var (key, label, tip, test) in new (string, string, string, Func<(bool Unknown, bool Licence, bool Receipt), bool>)[]
+        foreach (var (key, label, tip, test) in new (string, string, string, Func<(bool Unknown, bool Licence, bool Receipt, bool Originals), bool>)[]
                  {
                      ("unknown", "Unknown origin", "Packs with no source page recorded: nothing says where they came from.", o => o.Unknown),
                      ("licence", "Licence not saved", "Packs with no saved copy of their licence text.", o => o.Licence),
                      ("receipt", "No receipt", "Packs with no receipt on file (free packs have none).", o => o.Receipt),
+                     ("originals", "Originals not recorded", "Packs from a site that collects other people's assets, with assets whose own source is not recorded.", o => o.Originals),
                  })
         {
             int n = indexed.Count(p => test(OriginOf(p)));
@@ -930,7 +931,7 @@ public sealed class MainWindow : Window
         Refresh();
     }
 
-    private (bool Unknown, bool Licence, bool Receipt) OriginOf(Pack p)
+    private (bool Unknown, bool Licence, bool Receipt, bool Originals) OriginOf(Pack p)
     {
         if (p.Published)
         {
@@ -939,7 +940,8 @@ public sealed class MainWindow : Window
 
         if (!_originOf.TryGetValue(p.Id, out var o))
         {
-            o = (Provenance.UnknownOrigin(p.Provenance), Provenance.LicenceNotSaved(p.Provenance, p.IndexDir, LibraryRoot), Provenance.NoReceipt(p.Provenance));
+            o = (Provenance.UnknownOrigin(p.Provenance), Provenance.LicenceNotSaved(p.Provenance, p.IndexDir, LibraryRoot), Provenance.NoReceipt(p.Provenance),
+                Provenance.OriginalsMissing(p.Provenance, p.ByPackage.Values.Select(i => i.Path)));
             _originOf[p.Id] = o;
         }
 
@@ -954,7 +956,8 @@ public sealed class MainWindow : Window
         }
 
         var o = OriginOf(p);
-        return (_originOn.Contains("unknown") && o.Unknown) || (_originOn.Contains("licence") && o.Licence) || (_originOn.Contains("receipt") && o.Receipt);
+        return (_originOn.Contains("unknown") && o.Unknown) || (_originOn.Contains("licence") && o.Licence) || (_originOn.Contains("receipt") && o.Receipt)
+            || (_originOn.Contains("originals") && o.Originals);
     }
 
     private static string LicenceOf(Pack p) => p.Licence.Length == 0 ? "Unknown" : p.Licence.Split(':')[0];
@@ -1637,7 +1640,7 @@ public sealed class MainWindow : Window
         Chrome.Tip(packLink, $"Show only {ShortTitle(pack.Title)}'s assets.");
         packLink.Click += (_, _) => OnlyPack(pack);
         about.Body.Children.Add(InfoRow("Pack", packLink));
-        AddOrigin(about, item.Pack);
+        AddOrigin(about, item.Pack, item);
 
         if (item.Twins.Count > 0)
         {
@@ -1841,12 +1844,65 @@ public sealed class MainWindow : Window
         }
     }
 
+    /// <summary>An aggregator's asset: its original source, editable (saved on leaving the box) unless the library is
+    /// read-only here; flagged while empty.</summary>
+    private Control OriginalBox(Item item, Pack pack, Provenance p)
+    {
+        string now = p.Source.Originals.GetValueOrDefault(item.Path) ?? "";
+        if (_member)
+        {
+            return now.Length > 0 ? new SelectableTextBlock { Text = now, FontSize = Look.Theme.Label, Foreground = Look.Tokens.Text, TextWrapping = TextWrapping.Wrap }
+                : Flag("Not recorded", "Nobody recorded where this asset was made before the site collected it.");
+        }
+
+        var box = new TextBox { Text = now, PlaceholderText = "Creator, https://… where it was first published (Enter saves)", FontSize = Look.Theme.Label, TextWrapping = TextWrapping.Wrap };
+        box.KeyDown += (_, e) =>
+        {
+            if (e.Key == Key.Enter)
+            {
+                Save();
+                e.Handled = true;
+            }
+        };
+        box.LostFocus += (_, _) => Save();
+        return box;
+
+        void Save()
+        {
+            string t = Untrusted.Text((box.Text ?? "").Trim(), 500);
+            if (t == (p.Source.Originals.GetValueOrDefault(item.Path) ?? ""))
+            {
+                return;
+            }
+
+            if (t.Length == 0)
+            {
+                p.Source.Originals.Remove(item.Path);
+            }
+            else
+            {
+                p.Source.Originals[item.Path] = t;
+            }
+
+            try
+            {
+                p.Save(pack.IndexDir);
+                _originOf.Remove(pack.Id);
+                Log.Write("provenance", $"{pack.Id}: original source of {item.Name} {(t.Length == 0 ? "cleared" : "recorded")}");
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                _status.Text = $"Could not save the original source: {e.Message}";
+            }
+        }
+    }
+
     /// <summary>The library folder holding packs/ and index/ (where the shared licences/ and receipts/ live).</summary>
     private string LibraryRoot => Path.GetDirectoryName(_settings.Index.TrimEnd('/', '\\')) ?? _settings.Index;
 
     /// <summary>Source, licence, acquired and receipt rows: where the pack came from and the right to use it. A pack
     /// with no source page or no saved licence copy says so plainly; a missing receipt is only flagged when bought.</summary>
-    private void AddOrigin(FoldGroup about, Pack pack)
+    private void AddOrigin(FoldGroup about, Pack pack, Item? item = null)
     {
         Provenance? p = pack.Provenance;
         string url = p?.Source.Url is { Length: > 0 } u ? u : pack.Url;
@@ -1862,6 +1918,12 @@ public sealed class MainWindow : Window
         else
         {
             about.Body.Children.Add(InfoRow("Source", Flag("Unknown origin", "No source page is recorded for this pack: nothing says where it came from.")));
+        }
+
+        if (Provenance.IsAggregator(p) && item is not null)
+        {
+            about.Body.Children.Add(InfoRow("Site", Flag("Collects others' assets", "This pack comes from a site that gathers other people's assets. Keep each asset's original source, so anything it had no right to can be traced and removed.")));
+            about.Body.Children.Add(InfoRow("Original", OriginalBox(item, pack, p!)));
         }
 
         string licence = p is { Licence.Name.Length: > 0 } ? string.Join(" ", new[] { p.Licence.Name, p.Licence.Tier }.Where(x => x.Length > 0)) : pack.Licence;
