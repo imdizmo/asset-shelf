@@ -158,13 +158,15 @@ public static partial class Server
                 return;
             }
 
-            // a page served from this same machine (Questlog's, on its own port) may send suggestions from the browser:
-            // only this one route answers its preflight, and only for an Origin on one of this server's own host names
-            if (req.Url.AbsolutePath == "/team/suggestions" && SameMachinePage(req) is { } origin)
+            // a page served from this same machine (Questlog's, on its own port) may ask who the person is and send
+            // suggestions from the browser: only these two routes, only for an Origin on one of this server's own host
+            // names, and only suggestions answer a preflight
+            if (((req.Url.AbsolutePath == "/team/suggestions" && req.HttpMethod is "POST" or "OPTIONS") || (req.Url.AbsolutePath == "/team/whoami" && req.HttpMethod == "GET"))
+                && SameMachinePage(req) is { } origin)
             {
                 res.Headers["Access-Control-Allow-Origin"] = origin;
                 res.Headers["Vary"] = "Origin";
-                if (req.HttpMethod == "OPTIONS")
+                if (req.HttpMethod == "OPTIONS" && req.Url.AbsolutePath == "/team/suggestions")
                 {
                     res.Headers["Access-Control-Allow-Methods"] = "POST";
                     res.Headers["Access-Control-Allow-Headers"] = "Content-Type";
@@ -494,9 +496,11 @@ public static partial class Server
     /// rebinding) would otherwise count as same-origin in the browser, and could send what a launcher sends.</summary>
     static readonly HashSet<string> Hosts = new(StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>The request's Origin when it is http on one of this server's host names (any port), else null.</summary>
+    /// <summary>The request's Origin when it is Questlog's page on this machine (http, one of this server's host names,
+    /// Questlog's port), else null. Never for reading lists: only whoami and sending a suggestion use it.</summary>
+    // ponytail: Questlog's port is fixed at 8780 in the team server; make it a setting if Questlog ever moves
     static string? SameMachinePage(Req req) =>
-        Uri.TryCreate(req.Headers["Origin"], UriKind.Absolute, out Uri? o) && o.Scheme == "http" && o.AbsolutePath == "/"
+        Uri.TryCreate(req.Headers["Origin"], UriKind.Absolute, out Uri? o) && o.Scheme == "http" && o.AbsolutePath == "/" && o.Port == 8780
         && Hosts.Any(h => string.Equals(h[..h.LastIndexOf(':')], o.IdnHost, StringComparison.OrdinalIgnoreCase)) ? $"http://{o.Authority}" : null;
 
     static async Task KnowHosts(IPEndPoint at, string extra)

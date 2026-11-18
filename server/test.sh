@@ -136,6 +136,9 @@ want "$(code $u/team/suggestions)" 403 suggestion-list-member
 pre() { curl -s -o /dev/null -D "$s/hdr" -w '%{http_code}' -X OPTIONS -H "Origin: $1" -H 'Access-Control-Request-Method: POST' "$u$2"; }
 want "$(pre "http://127.0.0.1:8780" /team/suggestions)" 204 suggestion-preflight-same-machine; grep -qi '^Access-Control-Allow-Origin: http://127.0.0.1:8780' "$s/hdr"
 pre "http://evil.example:8780" /team/suggestions >/dev/null; ! grep -qi '^Access-Control' "$s/hdr" && echo "ok suggestion-preflight-other-site-refused"
+curl -s -o /dev/null -D "$s/hdr" -H 'Origin: http://127.0.0.1:8780' $u/team/whoami; grep -qi '^Access-Control-Allow-Origin: http://127.0.0.1:8780' "$s/hdr" && echo "ok whoami-readable-by-same-machine-page"
+pre "http://127.0.0.1:9999" /team/suggestions >/dev/null; ! grep -qi '^Access-Control' "$s/hdr" && echo "ok preflight-other-port-refused"
+curl -s -o /dev/null -D "$s/hdr" -H 'Origin: http://evil.example' $u/team/whoami; ! grep -qi '^Access-Control' "$s/hdr" && echo "ok whoami-not-readable-by-other-site"
 pre "http://127.0.0.1:8780" /team/crashes >/dev/null; ! grep -qi '^Access-Control' "$s/hdr" && echo "ok preflight-only-for-suggestions"
 want "$(curl -s -o "$s/out" -D "$s/hdr" -w '%{http_code}' $SG -H 'Origin: http://localhost:8780' --data-binary @"$s/sg-ok.zip" "$u/team/suggestions?tool=questlog&version=0.3.0&os=web")" 201 suggestion-from-page; grep -qi '^Access-Control-Allow-Origin: http://localhost:8780' "$s/hdr" && echo "ok suggestion-page-reads-answer"
 [[ $(ls "$s/store/suggestions/t" 2>/dev/null | wc -l) == 0 ]] && echo "ok suggestion-refused-not-kept"
@@ -158,6 +161,7 @@ want "$(code -X DELETE -H 'X-Jatify: 1' "$u/team/crashes/$cid")" 200 crash-delet
 [[ ! -e "$s/store/crashes/$cid" && ! -e "$s/store/crashes/$cid.json" ]] && echo "ok crash-deleted-both"
 want "$(code -X DELETE -H 'X-Jatify: 1' "$u/team/crashes/$cid")" 404 crash-delete-again
 want "$(code $u/team/suggestions)" 200 suggestion-list-admin
+curl -s -o /dev/null -D "$s/hdr" -H 'Origin: http://127.0.0.1:8780' $u/team/suggestions; ! grep -qi '^Access-Control' "$s/hdr" && echo "ok suggestion-list-not-readable-by-page"
 python3 -I -c 'import json,sys; d=json.load(open(sys.argv[1])); r=[x for x in d if x["tool"]=="asset-shelf"][0]; assert len(d)==3 and r["text"]=="Two shots." and r["screenshots"]==["a.png","b.jpeg"] and r["login"]=="me@x" and r["version"]=="0.4.0", d; print(r["id"])' "$s/out" > "$s/sgid" && echo "ok suggestion-text-in-list"
 sgid=$(cat "$s/sgid")
 want "$(code "$u/team/suggestions/$sgid")" 200 suggestion-download; cmp -s "$s/out" "$s/sg-ok.zip"
