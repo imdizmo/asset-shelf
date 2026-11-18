@@ -23,6 +23,8 @@ Before 0.3.0 it was not released as a package. It ran only on the team's own ser
   much each area holds (measured in the background). Owners and admins can add, change and remove the team's
   projects (`PUT`/`DELETE /team/projects/<id>`), without editing `projects.json` by hand.
 - `--listen tailscale[:port]` finds this machine's Tailscale address by itself.
+- `--projects <file>` (or `SHELF_PROJECTS_FILE`) keeps the team's project list somewhere other than beside the team
+  list; a list the server may not write answers with a sentence instead of an error.
 - `/healthz` answers "ok" to anyone, so a launcher or a container can tell the server is up. A line
   `SHELF_LISTENING <port>` is printed once it listens. `/team/whoami` and `/team/server` name the team server release
   it came from (`JATIFY_TEAM_SERVER`).

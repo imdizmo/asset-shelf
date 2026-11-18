@@ -14,7 +14,9 @@ props teammates publish (zips, kept as they are sent). It recognises callers by 
 
 ## The team's projects
 
-`projects.json`, in the same folder as `team.json`, lists the team's projects for the launcher. The owner edits it by
+`projects.json`, in the same folder as `team.json` unless `--projects <file>` (or `SHELF_PROJECTS_FILE`) names another
+place (in a container, where the team list's folder belongs to Questlog, keep it in the server's own data), lists the
+team's projects for the launcher. The owner edits it by
 hand, and it is re-read when it changes:
 
 ```json

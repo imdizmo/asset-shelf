@@ -29,7 +29,7 @@ public static partial class Server
     static readonly HashSet<string> Roles = ["owner", "admin", "member", "observer"];
     const int KeepVersions = 5;
 
-    static string _library = "", _store = "", _teamFile = "", _socket = "/var/run/tailscale/tailscaled.sock";
+    static string _library = "", _store = "", _teamFile = "", _projectsFile = "", _socket = "/var/run/tailscale/tailscaled.sock";
     static long _maxUpload = 4L << 30;
     static Who? _dev;  // only on a loopback address, for tests: every local caller is this person
 
@@ -50,6 +50,7 @@ public static partial class Server
                 case "--library": _library = Path.GetFullPath(args[i + 1]); break;
                 case "--store": _store = Path.GetFullPath(args[i + 1]); break;
                 case "--team": _teamFile = args[i + 1]; break;
+                case "--projects": _projectsFile = Path.GetFullPath(args[i + 1]); break;
                 case "--max-upload": _maxUpload = long.Parse(args[i + 1]); break;
                 case "--tailscale-socket": _socket = args[i + 1]; break;
                 case "--hosts": hosts = args[i + 1]; break;
@@ -58,6 +59,10 @@ public static partial class Server
         }
 
         _teamFile = _teamFile.Length > 0 ? _teamFile : Environment.GetEnvironmentVariable("SHELF_TEAM_FILE") ?? "";
+        if (_projectsFile.Length == 0 && Environment.GetEnvironmentVariable("SHELF_PROJECTS_FILE") is { Length: > 0 } pf)
+        {
+            _projectsFile = Path.GetFullPath(pf);
+        }
         if (listen.Length == 0 || _store.Length == 0 || _teamFile.Length == 0)
         {
             return Usage("--listen, --store and --team (or SHELF_TEAM_FILE) are needed");
@@ -126,7 +131,7 @@ public static partial class Server
 
     static int Usage(string why)
     {
-        Console.Error.WriteLine($"ShelfServer: {why}\nusage: ShelfServer --listen <tailscale-ip>:8781 --store <dir> --team <team.json> [--library <dir with index/ and packs/>] [--max-upload <bytes>] [--tailscale-socket <path>] [--hosts <name[:port],...>]");
+        Console.Error.WriteLine($"ShelfServer: {why}\nusage: ShelfServer --listen <tailscale-ip>:8781 --store <dir> --team <team.json> [--library <dir with index/ and packs/>] [--max-upload <bytes>] [--tailscale-socket <path>] [--hosts <name[:port],...>] [--projects <projects.json>]");
         return 2;
     }
 
@@ -194,6 +199,11 @@ public static partial class Server
                     catch (InvalidOperationException e)
                     {
                         await Error(res, 409, e.Message);
+                    }
+                    catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+                    {
+                        Console.Error.WriteLine($"{DateTime.UtcNow:O} projects file: {e.Message}");
+                        await Error(res, 409, "The team's project list cannot be written here (start the server with --projects pointing at a file it may write).");
                     }
                 }
             }
@@ -547,7 +557,7 @@ public static partial class Server
         static List<(string Id, JsonObject Row, string? Lfs)> _rows = [];
         static readonly Lock Gate = new();
 
-        static string File => Path.Combine(Path.GetDirectoryName(Path.GetFullPath(_teamFile))!, "projects.json");
+        static string File => _projectsFile.Length > 0 ? _projectsFile : Path.Combine(Path.GetDirectoryName(Path.GetFullPath(_teamFile))!, "projects.json");
 
         public static JsonArray List(string server)
         {
