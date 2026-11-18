@@ -954,11 +954,13 @@ public sealed class MainWindow : Window
             }
 
             string[] player = OperatingSystem.IsWindows()
-                ? ["powershell", "-NoProfile", "-Command", $"(New-Object Media.SoundPlayer '{wav.Replace("'", "''")}').PlaySync()"]
+                // the path goes in through the environment, never into the command's text: file names come from packs
+                ? ["powershell", "-NoProfile", "-NonInteractive", "-Command", "(New-Object Media.SoundPlayer $env:ASSET_SHELF_WAV).PlaySync()"]
                 : OperatingSystem.IsMacOS() ? ["afplay", wav]
                 : new[] { "pw-play", "paplay", "aplay" }.Where(p => (Environment.GetEnvironmentVariable("PATH") ?? "").Split(':').Any(d => File.Exists(Path.Combine(d, p)))).Take(1).Select(p => new[] { p, wav }).FirstOrDefault()
                     ?? throw new InvalidOperationException("no player found (pw-play, paplay or aplay)");
             var psi = new ProcessStartInfo(player[0]) { UseShellExecute = false };
+            psi.Environment["ASSET_SHELF_WAV"] = wav;
             foreach (string a in player[1..])
             {
                 psi.ArgumentList.Add(a);
