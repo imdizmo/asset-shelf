@@ -5,6 +5,15 @@ own list: [server/CHANGELOG.md](server/CHANGELOG.md). Each release's notes on Gi
 
 Entries before 0.2.0 were written afterwards, from the git history.
 
+## [Unreleased]
+
+### New
+
+- **Suggestion button (team members only).** When Asset Shelf is connected to a team server, a Suggestion button sits
+  at the top right. Write what would make Asset Shelf better, add screenshots (pick files, paste a picture, or add a
+  picture of the Asset Shelf window), and send it to the team. Without a team there is no button. Needs ShelfServer
+  0.7.0.
+
 ## [0.3.0] - 2026-11-18
 
 ### New

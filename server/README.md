@@ -39,7 +39,9 @@ dropped. An optional field that does not check out is left out.
 | `GET /team/projects` | `{ schema: 1, projects: [ { id, name, description, git, lfs (full URL or null), setup, branch?, folder?, memoryMax? } ] }` from `projects.json` beside the team list; members only |
 | `POST /team/crashes?tool=…&version=…&os=…` | a crash report, one zip of at most 20 MB, from any member: `{ id }`. The newest 500 (at most 1 GB) are kept |
 | `GET /team/crashes`, `GET /team/crashes/{id}`, `DELETE /team/crashes/{id}` | owner and admin: the reports, newest first (`{ id, tool, version, os, login, name, at, size }`), one report's zip, and deleting one |
-| `GET /team/server` | any member: `{ service, version, port, started, diskFree, storage: { packs, index, lfs, maps, props, crashes, measuredAt } }` (bytes; measured in the background) |
+| `POST /team/suggestions?tool=…&version=…&os=…` | a suggestion from any member: one zip of `suggestion.txt` (UTF-8, 1 to 20000 characters) and at most 10 `.png`/`.jpg` screenshots of at most 10 MB each, 20 MB in all: `{ id }`. The newest 500 (at most 1 GB) are kept |
+| `GET /team/suggestions`, `GET /team/suggestions/{id}`, `DELETE /team/suggestions/{id}` | owner and admin: as for crash reports, and each row also has `text` and `screenshots` (the picture names) |
+| `GET /team/server` | any member: `{ service, version, port, started, diskFree, storage: { packs, index, lfs, maps, props, crashes, suggestions, measuredAt } }` (bytes; measured in the background) |
 | `PUT /team/projects/{id}`, `DELETE /team/projects/{id}` | owner and admin, with `X-Jatify: 1` (and a JSON body for PUT): add, change or remove a project in `projects.json` |
 | `POST /team/playlogs?game=…&build=…` | a playtest log (gzipped `.playlog`, at most 20 MB) from any member: its facts, 201 (200 when that session was already sent). 400 when it is not a playlog for that game |
 | `GET /team/playlogs[?game=…]`, `GET /team/playlogs/{id}` | any member: `[ { id, game, build, map, player, started, length, ended, counts, partial, size } ]` newest first, and one log |

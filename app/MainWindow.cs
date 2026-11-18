@@ -369,6 +369,16 @@ public sealed class MainWindow : Window
         _search.Background = Look.Theme.SurfacePanel;
 
         var right = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 0, 8, 0) };
+        // team members only (user, 2026-11-18): a tool used without a team shows no Suggestion button
+        _suggest.IsVisible = false;
+        _suggest.Click += (_, _) =>
+        {
+            if (Team.Who?.Role is not null && Team.Address(_settings) is { } address)
+            {
+                _ = SuggestionDialog.Ask(this, address);
+            }
+        };
+        right.Children.Add(_suggest);
         right.Children.Add(SendButton());
 
         // the search takes what the menus and the send button leave (380 at most, 160 at least): nothing overlaps at 1024
@@ -569,6 +579,7 @@ public sealed class MainWindow : Window
             mi.IsVisible = !member;
         }
 
+        _suggest.IsVisible = Team.Who?.Role is not null;
         _status.Text = Team.Who is { } who ? $"Ready · team library as {who.Name} ({who.Role})"
             : _lib.Packs.Count == 0 ? $"No indexes in {_settings.Index}" : member ? "Ready · a shared library, read-only: its owner syncs it" : "Ready";
         if (_teamNote is { } note)
@@ -1549,6 +1560,8 @@ public sealed class MainWindow : Window
     private Border? _sendBox;
 
     private Button Target(string t) => t switch { "Blender" => _toBlender, "Unity" => _toUnity, "Groundwork" => _toGroundwork, _ => _toUnreal };
+
+    private readonly Button _suggest = Chrome.IconTextButton("send", "Suggestion", "Tell your team what to improve in Asset Shelf, with screenshots.");
 
     private Control SendButton()
     {

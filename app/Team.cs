@@ -121,12 +121,17 @@ public static class Team
     }
 
     /// <summary>Sends a crash report (a zip) to the team server; returns its id there.</summary>
-    public static async Task<string> SendCrashAsync(string address, string tool, string version, string os, byte[] zip)
+    public static Task<string> SendCrashAsync(string address, string tool, string version, string os, byte[] zip) => SendAsync("crashes", address, tool, version, os, zip);
+
+    /// <summary>POST /team/suggestions: a zip of suggestion.txt and screenshots (contract ~/.cache/jatify-ui/SUGGESTIONS.md).</summary>
+    public static Task<string> SendSuggestionAsync(string address, string tool, string version, string os, byte[] zip) => SendAsync("suggestions", address, tool, version, os, zip);
+
+    private static async Task<string> SendAsync(string area, string address, string tool, string version, string os, byte[] zip)
     {
         using var body = new ByteArrayContent(zip);
         body.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/zip");
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
-        using HttpResponseMessage r = await Http.PostAsync($"{Url(address)}/team/crashes?tool={Esc(tool)}&version={Esc(version)}&os={Esc(os)}", body, cts.Token);
+        using HttpResponseMessage r = await Http.PostAsync($"{Url(address)}/team/{area}?tool={Esc(tool)}&version={Esc(version)}&os={Esc(os)}", body, cts.Token);
         if (!r.IsSuccessStatusCode)
         {
             throw new InvalidOperationException(await ErrorOf(r));

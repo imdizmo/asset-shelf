@@ -4,6 +4,17 @@ The team's library service (see [README.md](README.md)). Its version is its own,
 From 0.5.0 it ships as part of the Jatify team server (imdizmo/jatify-team-server), not with Asset Shelf's releases.
 Before 0.3.0 it was not released as a package. It ran only on the team's own server while it was being built.
 
+## [0.7.0] - not released yet
+
+### New
+
+- **Suggestions from the team's tools.** A team member writes what to improve and adds screenshots; the tool sends
+  them to `POST /team/suggestions` as one zip (`suggestion.txt` and at most 10 PNG or JPEG pictures, 20 MB at most).
+  The owner and admins list them with the words shown (`GET /team/suggestions`), download one, and delete it. The
+  store keeps at most 500 suggestions or 1 GB, dropping the oldest. Contract for the tools: `SUGGESTIONS.md` beside
+  the team server's notes.
+- Crash reports and suggestions may also say `os=web`, for a tool used in a browser.
+
 ## [0.6.1] - 2026-11-18
 
 ### Fixed

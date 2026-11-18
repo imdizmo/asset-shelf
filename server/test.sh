@@ -107,6 +107,38 @@ want "$(code -X POST -H Content-Type:application/zip --data-binary @"$s/z.zip" "
 want "$(code -X POST -H Content-Type:application/zip --data-binary 'nope' "$u/team/crashes?tool=t&version=1&os=linux")" 400 crash-not-zip
 head -c 21000000 /dev/zero > "$s/huge.zip"
 want "$(code -X POST -H Content-Type:application/zip --data-binary @"$s/huge.zip" "$u/team/crashes?tool=t&version=1&os=linux")" 413 crash-too-big
+python3 -I - "$s" <<'PY'
+import zipfile, sys
+s = sys.argv[1]; png = b"\x89PNG\r\n\x1a\n" + b"x" * 100; jpg = b"\xff\xd8\xff\xe0" + b"x" * 100
+def z(name, files):
+    with zipfile.ZipFile(f"{s}/{name}", "w") as f:
+        for n, d in files.items(): f.writestr(n, d)
+z("sg.zip", {"suggestion.txt": "The search box could remember my last words.\n", "shot-1.png": png, "shot 2.jpg": jpg})
+z("sg-ok.zip", {"suggestion.txt": "Two shots.", "a.png": png, "b.jpeg": jpg})
+z("sg-none.zip", {"a.png": png})
+z("sg-blank.zip", {"suggestion.txt": "  \n "})
+z("sg-long.zip", {"suggestion.txt": "x" * 20001})
+z("sg-fake.zip", {"suggestion.txt": "hi", "a.png": b"MZ not a picture"})
+z("sg-exe.zip", {"suggestion.txt": "hi", "run.exe": b"MZ"})
+z("sg-dir.zip", {"suggestion.txt": "hi", "../a.png": png})
+z("sg-many.zip", {"suggestion.txt": "hi", **{f"{i}.png": png for i in range(11)}})
+with open(f"{s}/sg-latin1.zip", "wb"): pass
+z("sg-latin1.zip", {"suggestion.txt": "caf\xe9".encode("latin-1")})
+PY
+SG="-X POST -H Content-Type:application/zip"
+want "$(code $SG --data-binary @"$s/sg.zip" "$u/team/suggestions?tool=asset-shelf&version=0.4.0&os=linux")" 400 suggestion-bad-name
+want "$(code $SG --data-binary @"$s/sg-ok.zip" "$u/team/suggestions?tool=asset-shelf&version=0.4.0&os=linux")" 201 suggestion-sent; grep -q '"id":"asset-shelf/' "$s/out"
+want "$(code $SG --data-binary @"$s/sg-ok.zip" "$u/team/suggestions?tool=questlog&version=0.3.0&os=web")" 201 suggestion-from-web
+for bad in none blank long fake exe dir many latin1; do want "$(code $SG --data-binary @"$s/sg-$bad.zip" "$u/team/suggestions?tool=t&version=1&os=linux")" 400 "suggestion-$bad-refused"; done
+want "$(code -X POST --data-binary @"$s/sg-ok.zip" "$u/team/suggestions?tool=t&version=1&os=linux")" 415 suggestion-form-post-refused
+want "$(code $SG --data-binary @"$s/huge.zip" "$u/team/suggestions?tool=t&version=1&os=linux")" 413 suggestion-too-big
+want "$(code $u/team/suggestions)" 403 suggestion-list-member
+pre() { curl -s -o /dev/null -D "$s/hdr" -w '%{http_code}' -X OPTIONS -H "Origin: $1" -H 'Access-Control-Request-Method: POST' "$u$2"; }
+want "$(pre "http://127.0.0.1:8780" /team/suggestions)" 204 suggestion-preflight-same-machine; grep -qi '^Access-Control-Allow-Origin: http://127.0.0.1:8780' "$s/hdr"
+pre "http://evil.example:8780" /team/suggestions >/dev/null; ! grep -qi '^Access-Control' "$s/hdr" && echo "ok suggestion-preflight-other-site-refused"
+pre "http://127.0.0.1:8780" /team/crashes >/dev/null; ! grep -qi '^Access-Control' "$s/hdr" && echo "ok preflight-only-for-suggestions"
+want "$(curl -s -o "$s/out" -D "$s/hdr" -w '%{http_code}' $SG -H 'Origin: http://localhost:8780' --data-binary @"$s/sg-ok.zip" "$u/team/suggestions?tool=questlog&version=0.3.0&os=web")" 201 suggestion-from-page; grep -qi '^Access-Control-Allow-Origin: http://localhost:8780' "$s/hdr" && echo "ok suggestion-page-reads-answer"
+[[ $(ls "$s/store/suggestions/t" 2>/dev/null | wc -l) == 0 ]] && echo "ok suggestion-refused-not-kept"
 python3 -I -c 'import zipfile,sys; z=zipfile.ZipFile(sys.argv[1],"w"); z.writestr("p/picture.png","PNGDATA"); z.writestr("p/prop.propgen","{}")' "$s/p.zip"
 want "$(code -X PUT --data-binary @"$s/p.zip" "$u/props/p1?name=Crate")" 201 prop
 want "$(code $u/props/p1/picture)" 200 picture; [[ "$(cat "$s/out")" == PNGDATA ]]
@@ -125,6 +157,12 @@ want "$(code -X DELETE "$u/team/crashes/$cid")" 400 crash-delete-needs-header
 want "$(code -X DELETE -H 'X-Jatify: 1' "$u/team/crashes/$cid")" 200 crash-delete
 [[ ! -e "$s/store/crashes/$cid" && ! -e "$s/store/crashes/$cid.json" ]] && echo "ok crash-deleted-both"
 want "$(code -X DELETE -H 'X-Jatify: 1' "$u/team/crashes/$cid")" 404 crash-delete-again
+want "$(code $u/team/suggestions)" 200 suggestion-list-admin
+python3 -I -c 'import json,sys; d=json.load(open(sys.argv[1])); r=[x for x in d if x["tool"]=="asset-shelf"][0]; assert len(d)==3 and r["text"]=="Two shots." and r["screenshots"]==["a.png","b.jpeg"] and r["login"]=="me@x" and r["version"]=="0.4.0", d; print(r["id"])' "$s/out" > "$s/sgid" && echo "ok suggestion-text-in-list"
+sgid=$(cat "$s/sgid")
+want "$(code "$u/team/suggestions/$sgid")" 200 suggestion-download; cmp -s "$s/out" "$s/sg-ok.zip"
+want "$(code -X DELETE -H 'X-Jatify: 1' "$u/team/suggestions/$sgid")" 200 suggestion-delete
+want "$(code "$u/team/suggestions/$sgid")" 404 suggestion-gone
 want "$(code $u/team/server)" 200 server-status; grep -q '"service":"shelf"' "$s/out"; grep -q '"diskFree":' "$s/out"
 J='-H X-Jatify:1 -H Content-Type:application/json'
 want "$(code -X PUT $J -d '{"name":"New","git":"https://example.com/n.git","setup":"setup.py","lfs":"new","memoryMax":"8G"}' "$u/team/projects/newp")" 201 project-add; grep -q '"lfs":"http://127.0.0.1:'$port'/lfs/new"' "$s/out"

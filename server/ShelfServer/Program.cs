@@ -158,6 +158,22 @@ public static partial class Server
                 return;
             }
 
+            // a page served from this same machine (Questlog's, on its own port) may send suggestions from the browser:
+            // only this one route answers its preflight, and only for an Origin on one of this server's own host names
+            if (req.Url.AbsolutePath == "/team/suggestions" && SameMachinePage(req) is { } origin)
+            {
+                res.Headers["Access-Control-Allow-Origin"] = origin;
+                res.Headers["Vary"] = "Origin";
+                if (req.HttpMethod == "OPTIONS")
+                {
+                    res.Headers["Access-Control-Allow-Methods"] = "POST";
+                    res.Headers["Access-Control-Allow-Headers"] = "Content-Type";
+                    res.Headers["Access-Control-Max-Age"] = "600";
+                    res.StatusCode = 204;
+                    return;
+                }
+            }
+
             who = await Identify(req.RemoteEndPoint);
             string? role = who is null ? null : Team.RoleOf(who.Login);
             string[] seg = [.. (req.Url!.AbsolutePath).Split('/', StringSplitOptions.RemoveEmptyEntries).Select(Uri.UnescapeDataString)];
@@ -216,7 +232,11 @@ public static partial class Server
             }
             else if (seg is ["team", "crashes", .. var crashRest])
             {
-                await Crashes.Handle(req, res, crashRest, who, role);
+                await Inbox.Crashes.Handle(req, res, crashRest, who, role);
+            }
+            else if (seg is ["team", "suggestions", .. var suggestRest])
+            {
+                await Inbox.Suggestions.Handle(req, res, suggestRest, who, role);
             }
             else if (get && seg is ["library"])
             {
@@ -473,6 +493,11 @@ public static partial class Server
     /// request naming any other host is refused: a web page whose own domain was pointed at this address (DNS
     /// rebinding) would otherwise count as same-origin in the browser, and could send what a launcher sends.</summary>
     static readonly HashSet<string> Hosts = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>The request's Origin when it is http on one of this server's host names (any port), else null.</summary>
+    static string? SameMachinePage(Req req) =>
+        Uri.TryCreate(req.Headers["Origin"], UriKind.Absolute, out Uri? o) && o.Scheme == "http" && o.AbsolutePath == "/"
+        && Hosts.Any(h => string.Equals(h[..h.LastIndexOf(':')], o.IdnHost, StringComparison.OrdinalIgnoreCase)) ? $"http://{o.Authority}" : null;
 
     static async Task KnowHosts(IPEndPoint at, string extra)
     {
@@ -762,7 +787,7 @@ public static partial class Server
             {
                 for (int round = 0; ; round++)
                 {
-                    foreach (string area in new[] { "lfs", "maps", "props", "crashes" })
+                    foreach (string area in new[] { "lfs", "maps", "props", "crashes", "suggestions" })
                     {
                         Measure(area, Path.Combine(_store, area));
                     }
@@ -807,7 +832,7 @@ public static partial class Server
             var storage = new JsonObject();
             lock (Gate)
             {
-                foreach (string area in new[] { "packs", "index", "lfs", "maps", "props", "crashes" })
+                foreach (string area in new[] { "packs", "index", "lfs", "maps", "props", "crashes", "suggestions" })
                 {
                     storage[area] = Sizes.TryGetValue(area, out long b) ? b : null;
                 }
