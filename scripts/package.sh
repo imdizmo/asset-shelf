@@ -15,6 +15,8 @@ rm -rf "${stage:?}"; mkdir -p "$stage/tools/ShelfIndex"
 publish=(-c Release -r "$rid" --self-contained -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=none -p:Version="${version#v}")
 dotnet publish "$root/app/AssetShelf.csproj" "${publish[@]}" -o "$stage"
 dotnet publish "$root/tools/ShelfIndex/ShelfIndex.csproj" "${publish[@]}" -o "$stage/tools/ShelfIndex"
+dotnet publish "$root/cli/Shelf/Shelf.csproj" "${publish[@]}" -o "$stage"  # shelf, the command line, beside the app
+mkdir -p "$stage/skills/asset-shelf" && cp "$root/skills/asset-shelf/SKILL.md" "$stage/skills/asset-shelf/"
 cp "$root"/tools/*.py "$root/tools/requirements.txt" "$stage/tools/"
 cp "$root"/tools/ShelfIndex/*.cs "$root/tools/ShelfIndex/ShelfIndex.csproj" "$stage/tools/ShelfIndex/"
 mkdir -p "$stage/blender" "$stage/unreal"

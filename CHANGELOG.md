@@ -9,6 +9,13 @@ Entries before 0.2.0 were written afterwards, from the git history.
 
 ### New
 
+- **`shelf`, Asset Shelf from the command line:** search the library, show a pack or an asset (licence, credit,
+  conditions, original source, picture), and pull an asset into a project as a model file with its textures, into an
+  Unreal project, or as its loose files. Each pull records where it came from and copies the pack's licence text. It
+  refuses a pack whose safety scan found code unless you insist. It uses the team library when a team server is set.
+- **A Claude Code skill** (`shelf install-skill`), so a coding agent in a game project finds and pulls assets the same
+  way.
+
 - **Crash reports.** If Asset Shelf closed unexpectedly, the next start asks whether to send that run's log to your
   team's server. You can see exactly what is sent first. Nothing is sent unless you click Send, and nothing is asked
   when no team server is set. Each run now keeps its log in `~/.cache/asset-shelf/runs` (the last 10 runs).

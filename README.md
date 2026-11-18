@@ -101,6 +101,22 @@ who is connecting and finds them in the team list. Asset Shelf uses the server g
 `~/.cache/asset-shelf/team/<host>`, fetches pictures as they are shown and pack files when an asset is sent, and opens
 in member mode. The same server keeps maps and props that teammates publish from other tools.
 
+### From the command line
+
+`shelf` (beside the app in a release; `dotnet run --project cli/Shelf --` in a checkout) searches the same library,
+shows a pack or an asset, and pulls an asset into a project, with a line in `AssetShelf.provenance.jsonl` and the
+pack's licence text beside it:
+
+```sh
+shelf search tavern table --kind Mesh
+shelf show <asset id>
+shelf pull <asset id> --to ~/my-game/assets            # a model file (glTF) with its textures
+shelf pull <asset id> --to ~/MyUnrealProject --format unreal
+```
+
+`shelf install-skill` adds a Claude Code skill (`skills/asset-shelf/SKILL.md`) so a coding agent in a game project
+finds and pulls assets the same way, and never copies from the library by hand.
+
 ## Library layout
 
 ```
