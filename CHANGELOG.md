@@ -21,6 +21,11 @@ Entries before 0.2.0 were written afterwards, from the git history.
   filters and orders by those (a new Sound group), a sound's details show them, and **Play** plays it through the
   system's player. `shelf search --sound long,low,oneshot …` does the same for an agent. You still pick every sound.
   Packs are measured by `tools/index_library.py --sounds` (new packs as they are indexed).
+- **Mesh prep (optional, with Blender):** Prepare… on a mesh or character looks the model over (holes, faces turned
+  the wrong way, stray specks, separate parts, triangles, size), and can repair it, lighten it to a triangle budget
+  keeping the shape, make lighter LODs and a collision shape, and export it for Unreal, Godot, Groundwork or Blender.
+  A report says what was found and done, and the axes and units used. The asset itself is never changed: everything
+  goes into a folder you choose. `shelf prep` does the same. Without Blender the button is not there.
 - **A Claude Code skill** (`shelf install-skill`), so a coding agent in a game project finds and pulls assets the same
   way.
 

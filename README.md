@@ -29,6 +29,9 @@ Status: 0.1, used daily on Linux; Windows and macOS are untested.
   on Windows); the open map takes them in, and the status bar shows Groundwork's answer.
 - **Sounds by what they sound like.** Measured from the audio (no AI): length, loudness, pitch, brightness, attack,
   clean loops, channels. Filter and order the Sounds tab by them and play a sound from its details.
+- **Prepare a model (with Blender).** Check it for holes, inside-out faces and stray specks; repair, lighten, add
+  LODs and a collision shape; export for Unreal, Godot, Groundwork or Blender, with a report. The asset is never
+  changed.
 - **Spin in 3D.** A turntable rendered once by headless Blender, turned by dragging.
 - **Library sync.** Fab (sign in with your Epic account) and itch.io (an API key): what is new or updated, downloaded
   and checked file by file, then indexed. A preview first; nothing is downloaded until you say so.

@@ -1723,6 +1723,21 @@ public sealed class MainWindow : Window
         open.IsEnabled = item.Raw || item.Kind is "Mesh" or "Character" or "Animation";
         open.Click += async (_, _) => await OpenInBlenderAsync(item, open);
         _details.Children.Add(open);
+        if (MeshPrep.Takes(item) && MeshPrep.Available(_settings))
+        {
+            // optional: only where Blender is; nothing changes without it
+            Button prep = Chrome.IconTextButton("settings-2", "Prepare…", "Look the model over, repair and lighten it, make LODs and a collision shape, and export it for an engine, with a report. The asset itself is never changed.");
+            prep.HorizontalAlignment = HorizontalAlignment.Stretch;
+            prep.Margin = new Thickness(10, -4, 10, 10);
+            prep.Click += async (_, _) =>
+            {
+                if (await FetchAsync([item]))
+                {
+                    await new PrepDialog(item, _settings, UnrealEngine).ShowDialog(this);
+                }
+            };
+            _details.Children.Add(prep);
+        }
 
         var notes = new FoldGroup("Notes", open: _keep.Notes.ContainsKey(Collections.Key(item)));
         var note = new TextBox { Text = _keep.Notes.GetValueOrDefault(Collections.Key(item)) ?? "", AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinHeight = 60, FontSize = Look.Theme.Label, PlaceholderText = "Your note about this asset" };

@@ -23,7 +23,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import asset_shelf_bridge as bridge  # noqa: E402
 
 HOLE_MAX_SIDES = 64          # holes up to this many edges are closed; bigger openings are left (a cup, a window)
-FRAGMENT_SHARE = 0.02        # a separate part smaller than 2% of the whole model's size counts as a stray fragment
+FRAGMENT_SHARE = 0.01        # a stray fragment: a separate piece under 1% of the whole model's size...
+FRAGMENT_FACES = 8           # ...with no more than this many faces (a rivet or a gem has more: it is detail, kept)
 
 
 def look(objs):
@@ -55,7 +56,7 @@ def look(objs):
             ps = [v.co for f in part for v in f.verts]
             span = (mathutils.Vector((max(p.x for p in ps), max(p.y for p in ps), max(p.z for p in ps)))
                     - mathutils.Vector((min(p.x for p in ps), min(p.y for p in ps), min(p.z for p in ps)))).length
-            r['fragments'] += span < FRAGMENT_SHARE * diag
+            r['fragments'] += span < FRAGMENT_SHARE * diag and len(part) <= FRAGMENT_FACES
         bm.free()
     return r, diag
 
@@ -112,7 +113,7 @@ def repair(objs, diag):
             ps = [v.co for f in part for v in f.verts]
             span = (mathutils.Vector((max(p.x for p in ps), max(p.y for p in ps), max(p.z for p in ps)))
                     - mathutils.Vector((min(p.x for p in ps), min(p.y for p in ps), min(p.z for p in ps)))).length * scale
-            if span < FRAGMENT_SHARE * diag:
+            if span < FRAGMENT_SHARE * diag and len(part) <= FRAGMENT_FACES:
                 done['fragmentsRemoved'] += 1
                 bmesh.ops.delete(bm, geom=part, context='FACES')
         before = {f.index: f.normal.copy() for f in bm.faces}
