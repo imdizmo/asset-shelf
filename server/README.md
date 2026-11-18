@@ -25,7 +25,8 @@ hand, and it is re-read when it changes:
   "branch": "main", "folder": "Game", "memoryMax": "16G" } ] }
 ```
 
-`setup` is the path of a script inside the repository, never a command: this file only chooses which of the
+`setup` is the path of a Python script (`.py`) inside the repository, never a command (a save refuses anything
+else; an entry written by hand that is not `.py` is still listed, for an owner to fix): this file only chooses which of the
 repository's own files runs. An entry without a valid id, git URL (`https://…` or `git@host:…`) or setup path is
 dropped. An optional field that does not check out is left out.
 

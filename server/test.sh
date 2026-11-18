@@ -127,10 +127,11 @@ want "$(code -X DELETE -H 'X-Jatify: 1' "$u/team/crashes/$cid")" 200 crash-delet
 want "$(code -X DELETE -H 'X-Jatify: 1' "$u/team/crashes/$cid")" 404 crash-delete-again
 want "$(code $u/team/server)" 200 server-status; grep -q '"service":"shelf"' "$s/out"; grep -q '"diskFree":' "$s/out"
 J='-H X-Jatify:1 -H Content-Type:application/json'
-want "$(code -X PUT $J -d '{"name":"New","git":"https://example.com/n.git","setup":"s.sh","lfs":"new","memoryMax":"8G"}' "$u/team/projects/newp")" 201 project-add; grep -q '"lfs":"http://127.0.0.1:'$port'/lfs/new"' "$s/out"
-want "$(code -X PUT $J -d '{"name":"New 2","git":"https://example.com/n.git","setup":"s.sh"}' "$u/team/projects/newp")" 200 project-change
+want "$(code -X PUT $J -d '{"name":"New","git":"https://example.com/n.git","setup":"setup.py","lfs":"new","memoryMax":"8G"}' "$u/team/projects/newp")" 201 project-add; grep -q '"lfs":"http://127.0.0.1:'$port'/lfs/new"' "$s/out"
+want "$(code -X PUT $J -d '{"name":"New 2","git":"https://example.com/n.git","setup":"setup.py"}' "$u/team/projects/newp")" 200 project-change
 want "$(code -X PUT $J -d '{"git":"https://example.com/n.git","setup":"../s.sh"}' "$u/team/projects/bad")" 400 project-bad-setup; grep -q 'setup must be' "$s/out"
-want "$(code -X PUT $J -d '{"git":"https://example.com/n.git","setup":"s.sh","memoryMax":"lots"}' "$u/team/projects/bad")" 400 project-bad-optional
+want "$(code -X PUT $J -d '{"git":"https://example.com/n.git","setup":"setup.py","memoryMax":"lots"}' "$u/team/projects/bad")" 400 project-bad-optional
+want "$(code -X PUT $J -d '{"git":"https://example.com/n.git","setup":"tools/setup.sh"}' "$u/team/projects/sh")" 400 project-setup-must-be-python
 want "$(code -X PUT -H 'Content-Type: application/json' -d '{"git":"https://example.com/n.git","setup":"s.sh"}' "$u/team/projects/x")" 400 project-needs-header
 want "$(code -X PUT -H 'X-Jatify: 1' -H 'Content-Type: text/plain' -d '{"git":"https://example.com/n.git","setup":"s.sh"}' "$u/team/projects/x")" 400 project-needs-json
 want "$(code $u/team/projects)" 200 project-list; grep -q '"name":"New 2"' "$s/out"; grep -q '"id":"game"' "$s/out"

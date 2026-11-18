@@ -607,6 +607,11 @@ public static partial class Server
                 return (null, "setup must be the path of a script inside the repository, like tools/setup.sh");
             }
 
+            if (strict && !setup.EndsWith(".py", StringComparison.Ordinal))
+            {
+                return (null, "setup must be a Python script (.py) inside the repository, like setup.py, which is what launchers run");
+            }
+
             if (strict && lfs.Length > 0 && !IdRule().IsMatch(lfs))
             {
                 return (null, "lfs must be a project name on this server (letters, digits, '-' or '_')");
