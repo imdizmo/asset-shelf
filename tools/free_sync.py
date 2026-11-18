@@ -103,7 +103,7 @@ def files_polyhaven(aid, kind, res):
         if not g:
             raise ValueError('no glTF for this model')
         main = g['gltf']
-        yield f'gltf/{aid}.gltf', main['url'], main.get('md5'), main.get('size')
+        yield f"gltf/{re.sub(r'[^A-Za-z0-9_-]+', '_', aid)[:80]}.gltf", main['url'], main.get('md5'), main.get('size')
         for rel, inc in (main.get('include') or {}).items():
             if (r := safe_rel(rel)):
                 yield f'gltf/{r}', inc['url'], inc.get('md5'), inc.get('size')
@@ -147,10 +147,15 @@ def download(source, row, packs, index, res):
     raw = os.path.join(packs, s, 'raw')
     files = list(files_polyhaven(row['id'], row['kind'], res) if source == 'polyhaven' else files_ambientcg(row['id'], res))
     got = {}
+    root = os.path.realpath(raw)
     for rel, url, md5, size in files:
         if size and size > MAX_FILE:
             raise ValueError(f'{rel}: too large')
-        n = fetch(url, os.path.join(raw, rel), md5, size)
+        dest = os.path.join(raw, rel)
+        # every file stays inside the pack's raw folder, whatever the source named it
+        if not os.path.realpath(dest).startswith(root + os.sep):
+            raise ValueError(f'{rel}: outside the pack')
+        n = fetch(url, dest, md5, size)
         got[rel] = md5 or n
     json.dump({'source': source, 'id': row['id'], 'version': row['version'], 'res': res, 'files': got}, open(os.path.join(packs, s, 'free.json'), 'w'), indent=1)
     out = os.path.join(index, s)
