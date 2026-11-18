@@ -19,6 +19,8 @@ public static class Cli
                 ["show", var id, .. var rest] => await Show(id, rest),
                 ["pull", var id, .. var rest] => await Pull(id, rest),
                 ["install-skill"] => InstallSkill(),
+                ["embed", .. var rest] => await Embed(rest),
+                ["tokens", var text] => Tokens(await Meaning.TokensAsync(text)),
                 _ => Usage(),
             };
         }
@@ -36,6 +38,9 @@ public static class Cli
               shelf search <words...> [--kind Mesh,Character,...] [--pack <words>] [--licence <words>] [--limit 20] [--json]
               shelf show <pack id | asset id> [--json]
               shelf pull <asset id> --to <folder> [--format model|unreal|raw] [--force] [--json]
+              shelf search --meaning "<description>" [--kind ...] [--limit 20] [--json]   (needs shelf embed first)
+              shelf search --like <asset id> [--kind ...] [--limit 20] [--json]
+              shelf embed --pack <pack id> [--pack ...]   (search by meaning: reads the packs' pictures once; --all for every pack)
               shelf install-skill            (puts the asset-shelf skill in ~/.claude/skills)
             An asset id is <pack id>/<asset path>, as search prints it. Kinds: Mesh, Character, Animation, VFX, Sound,
             Blueprint, Map, Material, Texture, Other.
@@ -95,6 +100,11 @@ public static class Cli
 
     private static async Task<int> Search(string[] args)
     {
+        if (Option(args, "--meaning") is { } meaning || Option(args, "--like") is not null)
+        {
+            return await SearchByMeaning(args, Option(args, "--meaning"), Option(args, "--like"));
+        }
+
         string[] flags = ["--kind", "--pack", "--licence", "--limit"];
         var free = args.Where((a, i) => !a.StartsWith("--", StringComparison.Ordinal) && (i == 0 || !flags.Contains(args[i - 1]))).ToList();
         string[] query = Words(string.Join(' ', free));
@@ -129,6 +139,55 @@ public static class Cli
             Console.WriteLine($"{T(i.Name)}  [{i.Kind}]  {T(i.Pack.Title)}  ({T(LicenceOf(i.Pack))})\n  {T(Id(i))}");
         }
 
+        return 0;
+    }
+
+    private static async Task<int> SearchByMeaning(string[] args, string? text, string? like)
+    {
+        HashSet<string>? kinds = Option(args, "--kind") is { } k ? new(k.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries), StringComparer.OrdinalIgnoreCase) : null;
+        int limit = int.TryParse(Option(args, "--limit"), out int l) ? Math.Clamp(l, 1, 500) : 20;
+        Library lib = await LoadAsync();
+        float[] q = like is not null
+            ? Meaning.VectorOf(FindItem(lib, like) ?? throw new InvalidOperationException($"No asset {like}.")) ?? throw new InvalidOperationException($"{like} has no meaning vector yet: run shelf embed on its pack.")
+            : await Meaning.TextAsync(text!);
+        var hits = Meaning.Rank(lib, q, i => i.Published is null && (kinds is null ? Library.DefaultKinds.Contains(i.Kind) : kinds.Contains(i.Kind)) && Id(i) != like, limit);
+        if (args.Contains("--json"))
+        {
+            Console.WriteLine(JsonSerializer.Serialize(hits.Select(h => new { id = Id(h.Item), score = Math.Round(h.Score, 4), name = h.Item.Name, kind = h.Item.Kind, pack = h.Item.Pack.Title, licence = LicenceOf(h.Item.Pack), picture = h.Item.Thumb }), Pretty));
+            return 0;
+        }
+
+        foreach (var (i, score) in hits)
+        {
+            Console.WriteLine($"{score:0.000}  {T(i.Name)}  [{i.Kind}]  {T(i.Pack.Title)}\n  {T(Id(i))}");
+        }
+
+        return 0;
+    }
+
+    private static async Task<int> Embed(string[] args)
+    {
+        Library lib = await LoadAsync();
+        if (Team.Base is not null)
+        {
+            throw new InvalidOperationException("The team library is embedded by its owner, on the machine that holds it.");
+        }
+
+        var ids = args.Select((a, i) => (a, i)).Where(x => x.a == "--pack" && x.i + 1 < args.Length).Select(x => args[x.i + 1]).ToHashSet(StringComparer.Ordinal);
+        List<Pack> packs = args.Contains("--all") ? [.. lib.Packs.Where(p => p.Indexed && !p.Published)] : [.. lib.Packs.Where(p => ids.Contains(p.Id))];
+        if (packs.Count == 0)
+        {
+            throw new InvalidOperationException("Name packs with --pack <id> (or --all for the whole library, which takes a while).");
+        }
+
+        int n = await Meaning.EmbedAsync(packs, lib.Items);
+        Console.WriteLine($"{n} pictures read in {packs.Count} packs.");
+        return 0;
+    }
+
+    private static int Tokens(int[] ids)
+    {
+        Console.WriteLine(string.Join(' ', ids));
         return 0;
     }
 
@@ -337,9 +396,15 @@ public static class Cli
         return t.Length == 0 ? "asset" : t[..Math.Min(t.Length, 120)];
     }
 
-    /// <summary>True when <paramref name="path"/> is <paramref name="root"/> or inside it, after resolving "..".</summary>
+    /// <summary>True when <paramref name="path"/> is <paramref name="root"/> or inside it. A path with "." or ".." parts
+    /// is refused outright: the system resolves those after following links, a text check before it.</summary>
     private static bool Inside(string root, string path)
     {
+        if (path.Split('/', '\\').Any(p => p is "." or ".."))
+        {
+            return false;
+        }
+
         string r = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root)), f = Path.GetFullPath(path);
         return f == r || f.StartsWith(r + Path.DirectorySeparatorChar, StringComparison.Ordinal);
     }
