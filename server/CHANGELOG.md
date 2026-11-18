@@ -4,6 +4,15 @@ The team's library service (see [README.md](README.md)). Its version is its own,
 From 0.5.0 it ships as part of the Jatify team server (imdizmo/jatify-team-server), not with Asset Shelf's releases.
 Before 0.3.0 it was not released as a package. It ran only on the team's own server while it was being built.
 
+## [0.6.1] - not released yet
+
+### Fixed
+
+- **Started slowly, or not at all, with a large library in the Docker image.** The server watched its working folder
+  for settings changes, which in the image is `/`. So before it listened, it put a watch on every folder under it,
+  the library included: tens of thousands over a network mount, and close to its memory limit. It now watches only
+  its own program folder.
+
 ## [0.6.0] - 2026-11-18
 
 - **Playtest logs.** A game can send a playtest log (one gzipped `.playlog` of at most 20 MB, after the player agreed

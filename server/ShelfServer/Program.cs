@@ -113,7 +113,10 @@ public static partial class Server
 
         await KnowHosts(at, hosts);
         Status.Begin(at.Port);
-        var builder = WebApplication.CreateSlimBuilder();
+        // The content root is the program's own folder, not the working folder: ASP.NET watches its content root for
+        // settings changes, and in the image the working folder is /, so it put a watch on every folder of the library
+        // (an NFS mount of tens of thousands of folders) before it listened.
+        var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions { ContentRootPath = AppContext.BaseDirectory });
         builder.Logging.ClearProviders();
         builder.WebHost.ConfigureKestrel(k =>
         {
