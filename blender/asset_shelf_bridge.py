@@ -205,8 +205,13 @@ def drop_outside_images(roots):
     for img in list(bpy.data.images):
         if img.packed_file or img.source not in {'FILE', 'SEQUENCE', 'TILED'}:
             continue
-        real = os.path.realpath(bpy.path.abspath(img.filepath))
-        inside = any(real == a or real.startswith(a + os.sep) for a in allowed)
+        def within(path):
+            r = os.path.realpath(path)
+            return any(r == a or r.startswith(a + os.sep) for a in allowed)
+        # resolved as Blender loads it: relative to the library file the image came from, when it came from one
+        real = os.path.realpath(bpy.path.abspath(img.filepath, library=img.library))
+        lib_ok = img.library is None or within(bpy.path.abspath(img.library.filepath))
+        inside = lib_ok and within(real)
         if not inside or not real.lower().endswith(IMAGES):
             bpy.data.images.remove(img)
             dropped += 1
