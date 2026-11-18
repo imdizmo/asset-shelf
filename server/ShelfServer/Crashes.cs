@@ -31,6 +31,9 @@ public static partial class Crashes
         bool manager = role is "owner" or "admin";
         switch (req.HttpMethod, rest)
         {
+            case ("POST", []) when !Server.UploadType(req):
+                await Server.ErrorOut(res, 415, "Send the report as application/zip.");
+                break;
             case ("POST", []):
                 await Receive(req, res, who);
                 break;

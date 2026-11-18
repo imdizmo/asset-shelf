@@ -9,8 +9,8 @@ echo data > "$s/lib/packs/P1/unreal/Content/A.uasset"; ln -s /etc/passwd "$s/lib
 echo '{"version":1,"members":[{"login":"me@x","name":"Me","role":"member"},{"login":"obs@x","name":"O","role":"observer"}]}' > "$s/team.json"
 dotnet build -c Release "$root/server/ShelfServer" -v q -nologo >/dev/null
 port=18781; u="http://127.0.0.1:$port"
-start() { SHELF_DEV_LOGIN="$1" "$root/server/ShelfServer/bin/Release/net10.0/ShelfServer" --listen 127.0.0.1:$port --library "$s/lib" --store "$s/store" --team "$s/team.json" --max-upload 100000 >>"$s/log" 2>&1 & pid=$!; for _ in $(seq 50); do curl -s "$u/team/whoami" >/dev/null && return; sleep 0.1; done; }
-trap 'kill $pid 2>/dev/null' EXIT
+start() { SHELF_DEV_LOGIN="$1" "$root/server/ShelfServer/bin/Release/net10.0/ShelfServer" --listen 127.0.0.1:$port --library "$s/lib" --store "$s/store" --team "$s/team.json" --max-upload 100000 >>"$s/log" 2>&1 & spid=$!; for _ in $(seq 50); do curl -s "$u/team/whoami" >/dev/null && return; sleep 0.1; done; }
+trap 'kill $spid 2>/dev/null' EXIT
 code() { curl -s -o "$s/out" -w '%{http_code}' "$@"; }
 want() { [[ "$1" == "$2" ]] || { echo "FAIL $3: got $1 want $2: $(cat "$s/out")"; exit 1; }; echo "ok $3"; }
 start me@x
@@ -62,7 +62,7 @@ etag=$(curl -sI $u/maps/abc/pack | tr -d '\r' | sed -n 's/^ETag: //Ip')
 want "$(code -H "If-None-Match: $etag" $u/maps/abc/pack)" 304 etag
 ls -a "$s/store/maps/abc" | grep -q upload && { echo "FAIL leftover upload"; exit 1; }
 want "$(code $u/maps/abc)" 200 versions; grep -q '"version":1' "$s/out"
-want "$(code -X POST --data-binary @"$s/z.zip" "$u/team/crashes?tool=game-tool&version=1.2.3&os=windows")" 201 crash-sent; grep -q '"id":"game-tool/' "$s/out"
+want "$(code -X POST -H Content-Type:application/zip --data-binary @"$s/z.zip" "$u/team/crashes?tool=game-tool&version=1.2.3&os=windows")" 201 crash-sent; grep -q '"id":"game-tool/' "$s/out"
 python3 -I - "$s" <<'PY'
 import gzip, json, sys
 s = sys.argv[1]
@@ -83,8 +83,11 @@ with gzip.open(f"{s}/bomb.playlog.gz", "wb") as f:   # unpacks past 200 MB
 PY
 P="-H Content-Type:application/gzip"
 want "$(code -X POST $P --data-binary @"$s/a.playlog.gz" "$u/team/playlogs?game=zone&build=abc")" 201 playlog-sent
-python3 -I -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["id"]=="zone/20261118-201403-3fa9c1d2.playlog.gz" and d["counts"]["death"]==1 and d["counts"]["quest"]==1 and d["length"]==12.3 and d["ended"]=="quit" and d["map"]["version"]==2 and "sentBy" not in d, d' "$s/out" && echo "ok playlog-facts"
-want "$(code -X POST $P --data-binary @"$s/a.playlog.gz" "$u/team/playlogs?game=zone&build=abc")" 200 playlog-resent-kept-once
+plid=$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["id"])' "$s/out")
+python3 -I -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["id"].startswith("zone/") and "-3fa9c1d2-" in d["id"] and d["counts"]["death"]==1 and d["counts"]["quest"]==1 and d["length"]==12.3 and d["ended"]=="quit" and d["map"]["version"]==2 and "sentBy" not in d, d' "$s/out" && echo "ok playlog-facts"
+want "$(code -X POST $P --data-binary @"$s/a.playlog.gz" "$u/team/playlogs?game=zone&build=abc")" 200 playlog-resent-kept-once; grep -q "\"$plid\"" "$s/out"
+want "$(code -X POST -H 'Content-Type: text/plain' --data-binary @"$s/a.playlog.gz" "$u/team/playlogs?game=zone&build=abc")" 415 playlog-plain-text-refused
+want "$(code -X POST --data-binary @"$s/z.zip" "$u/team/crashes?tool=t&version=1&os=linux")" 415 crash-form-post-refused
 want "$(code -X POST $P --data-binary @"$s/b.playlog.gz" "$u/team/playlogs?game=zone&build=abc")" 201 playlog-torn-line
 want "$(code -X POST $P --data-binary @"$s/other.playlog.gz" "$u/team/playlogs?game=zone&build=abc")" 400 playlog-wrong-game
 want "$(code -X POST $P --data-binary @"$s/badplayer.playlog.gz" "$u/team/playlogs?game=zone&build=abc")" 400 playlog-bad-player
@@ -92,23 +95,24 @@ want "$(code -X POST $P --data-binary 'plain text' "$u/team/playlogs?game=zone&b
 want "$(code -X POST $P --data-binary @"$s/a.playlog.gz" "$u/team/playlogs?game=../x&build=abc")" 400 playlog-bad-game
 want "$(code -X POST $P --data-binary @"$s/bomb.playlog.gz" "$u/team/playlogs?game=zone&build=abc")" 201 playlog-bomb; grep -q '"partial":true' "$s/out"
 want "$(code "$u/team/playlogs?game=zone")" 200 playlog-list; ! grep -q sentBy "$s/out"; grep -q 0badcafe "$s/out"
-want "$(code "$u/team/playlogs/zone/20261118-201403-3fa9c1d2.playlog.gz")" 200 playlog-download; cmp -s "$s/out" "$s/a.playlog.gz"
-want "$(code -X DELETE "$u/team/playlogs/zone/20261118-201403-3fa9c1d2.playlog.gz")" 400 playlog-delete-needs-header
-want "$(code -X DELETE -H 'X-Jatify: 1' "$u/team/playlogs/zone/20261118-201403-3fa9c1d2.playlog.gz")" 200 playlog-sender-deletes
+want "$(code "$u/team/playlogs/$plid")" 200 playlog-download; cmp -s "$s/out" "$s/a.playlog.gz"
+want "$(code -X DELETE "$u/team/playlogs/$plid")" 400 playlog-delete-needs-header
+want "$(code -X DELETE -H 'X-Jatify: 1' "$u/team/playlogs/$plid")" 200 playlog-sender-deletes
+bid=$(python3 -I -c 'import json,sys; print([r["id"] for r in json.load(open(sys.argv[1])) if r["player"]=="0badcafe"][0])' <(curl -s "$u/team/playlogs?game=zone")); echo "$bid" > "$s/bid"
 want "$(code $u/team/crashes)" 403 crash-list-member
 want "$(code -X DELETE "$u/team/crashes/game-tool/x.zip")" 403 crash-delete-member
 want "$(code -X PUT -H 'X-Jatify: 1' -H 'Content-Type: application/json' -d '{"git":"https://example.com/n.git","setup":"s.sh"}' "$u/team/projects/m")" 403 project-member
 want "$(code $u/team/server)" 200 server-status-member
-want "$(code -X POST --data-binary @"$s/z.zip" "$u/team/crashes?tool=Bad/Tool&version=1&os=linux")" 400 crash-bad-tool
-want "$(code -X POST --data-binary 'nope' "$u/team/crashes?tool=t&version=1&os=linux")" 400 crash-not-zip
+want "$(code -X POST -H Content-Type:application/zip --data-binary @"$s/z.zip" "$u/team/crashes?tool=Bad/Tool&version=1&os=linux")" 400 crash-bad-tool
+want "$(code -X POST -H Content-Type:application/zip --data-binary 'nope' "$u/team/crashes?tool=t&version=1&os=linux")" 400 crash-not-zip
 head -c 21000000 /dev/zero > "$s/huge.zip"
-want "$(code -X POST --data-binary @"$s/huge.zip" "$u/team/crashes?tool=t&version=1&os=linux")" 413 crash-too-big
+want "$(code -X POST -H Content-Type:application/zip --data-binary @"$s/huge.zip" "$u/team/crashes?tool=t&version=1&os=linux")" 413 crash-too-big
 python3 -I -c 'import zipfile,sys; z=zipfile.ZipFile(sys.argv[1],"w"); z.writestr("p/picture.png","PNGDATA"); z.writestr("p/prop.propgen","{}")' "$s/p.zip"
 want "$(code -X PUT --data-binary @"$s/p.zip" "$u/props/p1?name=Crate")" 201 prop
 want "$(code $u/props/p1/picture)" 200 picture; [[ "$(cat "$s/out")" == PNGDATA ]]
 want "$(code $u/maps/abc/picture)" 404 no-picture
 want "$(code -X DELETE $u/maps/abc)" 403 member-cannot-delete
-kill $pid; wait $pid 2>/dev/null || true
+kill $spid; wait $spid 2>/dev/null || true
 echo '{"version":1,"members":[{"login":"boss@x","name":"Boss","role":"admin"}]}' > "$s/team2.json"; cp "$s/team.json" "$s/team1.json"; cp "$s/team2.json" "$s/team.json"
 start boss@x
 want "$(code $u/team/crashes)" 200 crash-list-admin; grep -q 'game-tool/' "$s/out"
@@ -136,21 +140,21 @@ head -c 3000000 /dev/zero | tr '\0' ' ' > "$s/big.json"
 want "$(code -X PUT -H 'X-Jatify: 1' -H 'Content-Type: application/json' -H 'Transfer-Encoding: chunked' --data-binary @"$s/big.json" "$u/team/projects/newp")" 400 project-chunked-too-big
 want "$(code -X DELETE -H 'X-Jatify: 1' "$u/team/projects/newp")" 200 project-delete
 want "$(code -X DELETE -H 'X-Jatify: 1' "$u/team/projects/newp")" 404 project-delete-again
-for i in $(seq 501); do curl -s -o /dev/null -X POST --data-binary @"$s/z.zip" "$u/team/crashes?tool=spam&version=1&os=linux"; done
+for i in $(seq 501); do curl -s -o /dev/null -X POST -H Content-Type:application/zip --data-binary @"$s/z.zip" "$u/team/crashes?tool=spam&version=1&os=linux"; done
 [[ $(ls "$s/store/crashes/spam" "$s/store/crashes/game-tool" | grep -c '\.zip$') == 500 ]] && echo "ok crash-store-bounded" || { echo "FAIL crash store not bounded"; exit 1; }
 want "$(code -X DELETE "$u/maps/abc?version=1")" 200 delete-version; grep -q '"versionsLeft":1' "$s/out"
 want "$(code "$u/maps/abc/pack?version=1")" 404 version-gone
 want "$(code -X DELETE "$u/maps/abc?version=9")" 404 delete-missing
 want "$(code -X DELETE $u/maps/abc)" 200 delete-all
 want "$(code $u/maps)" 200 list-empty; [[ "$(cat "$s/out")" == "[]" ]]
-kill $pid; wait $pid 2>/dev/null || true
+kill $spid; wait $spid 2>/dev/null || true
 cp "$s/team1.json" "$s/team.json"
 start obs@x
 want "$(code -X PUT --data-binary @"$s/z.zip" "$u/props/p1")" 403 observer
 want "$(code $u/props)" 200 observer-read
 want "$(code "$u/team/playlogs")" 200 playlog-observer-lists
-want "$(code -X DELETE -H 'X-Jatify: 1' "$u/team/playlogs/zone/20261118-210000-0badcafe.playlog.gz")" 403 playlog-others-cannot-delete
-kill $pid; wait $pid 2>/dev/null || true
+want "$(code -X DELETE -H 'X-Jatify: 1' "$u/team/playlogs/$(cat "$s/bid")")" 403 playlog-others-cannot-delete
+kill $spid; wait $spid 2>/dev/null || true
 start stranger@x
 want "$(code $u/team/whoami)" 200 stranger-whoami; grep -q '"role":null' "$s/out"
 want "$(code $u/library)" 403 stranger

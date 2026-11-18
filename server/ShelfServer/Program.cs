@@ -956,6 +956,11 @@ public static partial class Server
 
     internal static bool IsWholeZip(string file) => WholeZip(file);
 
+    /// <summary>An upload's content type is not one a web page can send without a preflight (text/plain, a form): this
+    /// server never answers a preflight, so a page on the tailnet cannot post an upload in someone's name.</summary>
+    internal static bool UploadType(Req req) => (req.ContentType ?? "").Split(';')[0].Trim().ToLowerInvariant() is { Length: > 0 } t
+        && t is not ("text/plain" or "application/x-www-form-urlencoded" or "multipart/form-data");
+
     internal static long MaxUpload => _maxUpload;
 
     internal static bool ValidId(string id) => IdRule().IsMatch(id);

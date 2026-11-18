@@ -11,7 +11,11 @@ Before 0.3.0 it was not released as a package. It ran only on the team's own ser
   (deaths, kills, quest steps, crafts, builds, gathers, respawns, teleports; length; how it ended), so any member can
   list them with those facts and download one. The owner, admins and whoever sent a log can delete it. Who sent a log
   is kept beside it and never listed: the logs name only a random player id. The newest 2,000 (at most 2 GB) are
-  kept.
+  kept. Each log is named by when the server received it and a hash of its bytes, so the same file sent again is kept
+  once and no log can push out or stand in for another.
+- **Uploads must say what they are.** A crash report needs `Content-Type: application/zip`, and a playtest log
+  `application/gzip` (anything but plain text or a form). A web page open in the tailnet could otherwise post one in
+  someone's name. A tool that sent a crash report without a content type gets 415 and has to add it.
 
 ## [0.5.0] - not released yet
 

@@ -1,7 +1,8 @@
 // Playtest logs from the team's games (format: one JSON line per event, the first a header; gzipped), sent only after
 // the player said yes twice. Read once on upload: the header is checked and the events counted, and the facts are kept
-// in a .json beside the file, so a listing never opens a log. Kept in <store>/playlogs/<game>/<started>-<player>.playlog.gz;
-// the oldest go past 2,000 logs or 2 GB. Members list and download; the owner, admins and whoever sent one delete it.
+// in a .json beside the file, so a listing never opens a log. Kept in
+// <store>/playlogs/<game>/<received>-<player>-<content hash>.playlog.gz (the server's own clock and the file's hash, never
+// a time the client wrote); the oldest received go past 2,000 logs or 2 GB. Members list and download; the owner, admins and whoever sent one delete it.
 // The sender's login is kept beside the file for that, and never listed: the logs only name a random player id.
 using System.IO.Compression;
 using System.Text;
@@ -27,7 +28,7 @@ public static partial class Playlogs
     [GeneratedRegex("^[0-9a-f]{8}$")]
     private static partial Regex PlayerRule();
 
-    [GeneratedRegex("^[a-z0-9-]{1,32}/[0-9]{8}-[0-9]{6}-[0-9a-f]{8}\\.playlog\\.gz$")]
+    [GeneratedRegex("^[a-z0-9-]{1,32}/[0-9]{8}-[0-9]{6}-[0-9a-f]{8}-[0-9a-f]{8}\\.playlog\\.gz$")]
     private static partial Regex IdRule();
 
     static string Root => Path.Combine(Server.Store, "playlogs");
@@ -36,6 +37,9 @@ public static partial class Playlogs
     {
         switch (req.HttpMethod, rest)
         {
+            case ("POST", []) when !Server.UploadType(req):
+                await Server.ErrorOut(res, 415, "Send the log as application/gzip.");
+                break;
             case ("POST", []):
                 await Receive(req, res, who);
                 break;
@@ -97,8 +101,16 @@ public static partial class Playlogs
                 return;
             }
 
-            string started = DateTime.Parse(facts["started"]!.GetValue<string>(), null, System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal).ToString("yyyyMMdd-HHmmss");
-            string file = $"{started}-{facts["player"]!.GetValue<string>()}.playlog.gz", id = $"{game}/{file}";
+            // the same bytes sent again (a retry) are kept once; anything else is a new log, named by the server
+            string player = facts["player"]!.GetValue<string>();
+            string hash;
+            await using (FileStream check = File.OpenRead(part))
+            {
+                hash = Convert.ToHexStringLower(await System.Security.Cryptography.SHA256.HashDataAsync(check))[..8];
+            }
+
+            string? same = Directory.EnumerateFiles(dir, $"*-{player}-{hash}.playlog.gz").Select(Path.GetFileName).FirstOrDefault();
+            string file = same ?? $"{DateTime.UtcNow:yyyyMMdd-HHmmss}-{player}-{hash}.playlog.gz", id = $"{game}/{file}";
             facts["id"] = id;
             facts["build"] = build;
             facts["size"] = size;
@@ -300,7 +312,7 @@ public static partial class Playlogs
         .OrderByDescending(f => f.Name, StringComparer.Ordinal)
         .Select(f => Facts(f.FullName)).OfType<JsonObject>().Select(o => (JsonNode)o)]);
 
-    /// <summary>Drops the oldest logs (by start time) until at most MaxCount and MaxTotal bytes are kept.</summary>
+    /// <summary>Drops the oldest logs (by when they arrived) until at most MaxCount and MaxTotal bytes are kept.</summary>
     static void Trim()
     {
         List<FileInfo> all = [.. All().OrderBy(f => f.Name, StringComparer.Ordinal)];
