@@ -63,6 +63,38 @@ want "$(code -H "If-None-Match: $etag" $u/maps/abc/pack)" 304 etag
 ls -a "$s/store/maps/abc" | grep -q upload && { echo "FAIL leftover upload"; exit 1; }
 want "$(code $u/maps/abc)" 200 versions; grep -q '"version":1' "$s/out"
 want "$(code -X POST --data-binary @"$s/z.zip" "$u/team/crashes?tool=game-tool&version=1.2.3&os=windows")" 201 crash-sent; grep -q '"id":"game-tool/' "$s/out"
+python3 -I - "$s" <<'PY'
+import gzip, json, sys
+s = sys.argv[1]
+def log(name, player, started, extra=b"", game="zone"):
+    head = {"playlog": 1, "game": game, "build": "abc", "map": {"name": "Tiers", "team": "t1", "version": 2}, "player": player, "started": started}
+    lines = [json.dumps(head)] + [json.dumps(e) for e in [{"t": 1.0, "e": "pos", "p": [1, 2, 3], "yaw": 90}, {"t": 5.5, "e": "death", "p": [1, 2, 3], "by": "wolf"},
+             {"t": 6.0, "e": "respawn", "p": [0, 0, 0]}, {"t": 9.0, "e": "quest", "id": "q1", "step": "done"}, {"t": 12.3, "e": "end", "why": "quit"}]]
+    with gzip.open(f"{s}/{name}", "wb") as f:
+        f.write(("\n".join(lines) + "\n").encode() + extra)
+log("a.playlog.gz", "3fa9c1d2", "2026-11-18T20:14:03Z")
+log("b.playlog.gz", "0badcafe", "2026-11-18T21:00:00Z", b'{"t":13.0,"e":"pos"' )   # a torn last line
+log("other.playlog.gz", "3fa9c1d2", "2026-11-18T20:14:03Z", game="othergame")
+log("badplayer.playlog.gz", "Bob", "2026-11-18T20:14:03Z")
+with gzip.open(f"{s}/bomb.playlog.gz", "wb") as f:   # unpacks past 200 MB
+    f.write((json.dumps({"playlog": 1, "game": "zone", "player": "deadbeef", "started": "2026-11-18T22:00:00Z"}) + "\n").encode())
+    line = b'{"t":1,"e":"pos"}\n' * 100000
+    for _ in range(int(210e6 / len(line)) + 1): f.write(line)
+PY
+P="-H Content-Type:application/gzip"
+want "$(code -X POST $P --data-binary @"$s/a.playlog.gz" "$u/team/playlogs?game=zone&build=abc")" 201 playlog-sent
+python3 -I -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["id"]=="zone/20261118-201403-3fa9c1d2.playlog.gz" and d["counts"]["death"]==1 and d["counts"]["quest"]==1 and d["length"]==12.3 and d["ended"]=="quit" and d["map"]["version"]==2 and "sentBy" not in d, d' "$s/out" && echo "ok playlog-facts"
+want "$(code -X POST $P --data-binary @"$s/a.playlog.gz" "$u/team/playlogs?game=zone&build=abc")" 200 playlog-resent-kept-once
+want "$(code -X POST $P --data-binary @"$s/b.playlog.gz" "$u/team/playlogs?game=zone&build=abc")" 201 playlog-torn-line
+want "$(code -X POST $P --data-binary @"$s/other.playlog.gz" "$u/team/playlogs?game=zone&build=abc")" 400 playlog-wrong-game
+want "$(code -X POST $P --data-binary @"$s/badplayer.playlog.gz" "$u/team/playlogs?game=zone&build=abc")" 400 playlog-bad-player
+want "$(code -X POST $P --data-binary 'plain text' "$u/team/playlogs?game=zone&build=abc")" 400 playlog-not-gzip
+want "$(code -X POST $P --data-binary @"$s/a.playlog.gz" "$u/team/playlogs?game=../x&build=abc")" 400 playlog-bad-game
+want "$(code -X POST $P --data-binary @"$s/bomb.playlog.gz" "$u/team/playlogs?game=zone&build=abc")" 201 playlog-bomb; grep -q '"partial":true' "$s/out"
+want "$(code "$u/team/playlogs?game=zone")" 200 playlog-list; ! grep -q sentBy "$s/out"; grep -q 0badcafe "$s/out"
+want "$(code "$u/team/playlogs/zone/20261118-201403-3fa9c1d2.playlog.gz")" 200 playlog-download; cmp -s "$s/out" "$s/a.playlog.gz"
+want "$(code -X DELETE "$u/team/playlogs/zone/20261118-201403-3fa9c1d2.playlog.gz")" 400 playlog-delete-needs-header
+want "$(code -X DELETE -H 'X-Jatify: 1' "$u/team/playlogs/zone/20261118-201403-3fa9c1d2.playlog.gz")" 200 playlog-sender-deletes
 want "$(code $u/team/crashes)" 403 crash-list-member
 want "$(code -X DELETE "$u/team/crashes/game-tool/x.zip")" 403 crash-delete-member
 want "$(code -X PUT -H 'X-Jatify: 1' -H 'Content-Type: application/json' -d '{"git":"https://example.com/n.git","setup":"s.sh"}' "$u/team/projects/m")" 403 project-member
@@ -116,6 +148,8 @@ cp "$s/team1.json" "$s/team.json"
 start obs@x
 want "$(code -X PUT --data-binary @"$s/z.zip" "$u/props/p1")" 403 observer
 want "$(code $u/props)" 200 observer-read
+want "$(code "$u/team/playlogs")" 200 playlog-observer-lists
+want "$(code -X DELETE -H 'X-Jatify: 1' "$u/team/playlogs/zone/20261118-210000-0badcafe.playlog.gz")" 403 playlog-others-cannot-delete
 kill $pid; wait $pid 2>/dev/null || true
 start stranger@x
 want "$(code $u/team/whoami)" 200 stranger-whoami; grep -q '"role":null' "$s/out"

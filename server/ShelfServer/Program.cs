@@ -197,6 +197,10 @@ public static partial class Server
                     }
                 }
             }
+            else if (seg is ["team", "playlogs", .. var playRest])
+            {
+                await Playlogs.Handle(req, res, playRest, who, role);
+            }
             else if (seg is ["team", "crashes", .. var crashRest])
             {
                 await Crashes.Handle(req, res, crashRest, who, role);

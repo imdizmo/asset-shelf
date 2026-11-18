@@ -4,6 +4,15 @@ The team's library service (see [README.md](README.md)). Its version is its own,
 From 0.5.0 it ships as part of the Jatify team server (imdizmo/jatify-team-server), not with Asset Shelf's releases.
 Before 0.3.0 it was not released as a package. It ran only on the team's own server while it was being built.
 
+## [0.6.0] - not released yet
+
+- **Playtest logs.** A game can send a playtest log (one gzipped `.playlog` of at most 20 MB, after the player agreed
+  twice) to `POST /team/playlogs?game=…&build=…`. The server checks its header and counts its events once on arrival
+  (deaths, kills, quest steps, crafts, builds, gathers, respawns, teleports; length; how it ended), so any member can
+  list them with those facts and download one. The owner, admins and whoever sent a log can delete it. Who sent a log
+  is kept beside it and never listed: the logs name only a random player id. The newest 2,000 (at most 2 GB) are
+  kept.
+
 ## [0.5.0] - not released yet
 
 - **For a launcher's Server tab:** `GET /team/server` shows the server's version, when it started, free disk and how

@@ -38,6 +38,9 @@ dropped. An optional field that does not check out is left out.
 | `GET /team/crashes`, `GET /team/crashes/{id}`, `DELETE /team/crashes/{id}` | owner and admin: the reports, newest first (`{ id, tool, version, os, login, name, at, size }`), one report's zip, and deleting one |
 | `GET /team/server` | any member: `{ service, version, port, started, diskFree, storage: { packs, index, lfs, maps, props, crashes, measuredAt } }` (bytes; measured in the background) |
 | `PUT /team/projects/{id}`, `DELETE /team/projects/{id}` | owner and admin, with `X-Jatify: 1` (and a JSON body for PUT): add, change or remove a project in `projects.json` |
+| `POST /team/playlogs?game=…&build=…` | a playtest log (gzipped `.playlog`, at most 20 MB) from any member: its facts, 201 (200 when that session was already sent). 400 when it is not a playlog for that game |
+| `GET /team/playlogs[?game=…]`, `GET /team/playlogs/{id}` | any member: `[ { id, game, build, map, player, started, length, ended, counts, partial, size } ]` newest first, and one log |
+| `DELETE /team/playlogs/{id}` | owner, admin or whoever sent it, with `X-Jatify: 1` |
 | `GET /library` | `[ { id, files: [ { name, size, mtime } ] } ]`: each pack's top index files |
 | `GET /library/{pack}/index/{path}` | a file from `index/{pack}/` |
 | `GET /library/{pack}/files` | `[ { path, size, mtime } ]`: every file of `packs/{pack}/` |
