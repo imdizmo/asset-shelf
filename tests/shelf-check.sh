@@ -29,4 +29,9 @@ grep -q "terms of the licence" "$s/out/licences/Crates_abc123.txt" && ok "licenc
 echo mine > "$s/out/Crates_abc123/fbx/crates/crate_big.fbx"; shelf pull "$id" --to "$s/out" --format raw >/dev/null
 [[ $(cat "$s/out/Crates_abc123/fbx/crates/crate_big.fbx") == mine ]] && ok "never overwrites"
 ! shelf pull "$id" --to "$s/out" --format unreal 2>/dev/null && ok "refuses a format the asset lacks"
+# a link inside the pack is not followed out of it, and a licence copy that changed since it was recorded is not copied
+ln -s /etc "$s/lib/packs/Crates_abc123/raw/fbx/crates/textures/etc"; echo changed >> "$s/lib/index/Crates_abc123/provenance/licence-2026-11-18.txt"
+rm -rf "$s/out2"; shelf pull "$id" --to "$s/out2" --format raw >/dev/null
+[[ ! -e "$s/out2/Crates_abc123/fbx/crates/textures/etc" ]] && ok "links are not followed"
+[[ ! -e "$s/out2/licences/Crates_abc123.txt" ]] && ok "a changed licence copy is not copied"
 echo "all passed"; rm -rf "${s:?}"

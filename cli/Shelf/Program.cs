@@ -126,7 +126,7 @@ public static class Cli
 
         foreach (Item i in hits)
         {
-            Console.WriteLine($"{i.Name}  [{i.Kind}]  {i.Pack.Title}  ({LicenceOf(i.Pack)})\n  {Id(i)}");
+            Console.WriteLine($"{T(i.Name)}  [{i.Kind}]  {T(i.Pack.Title)}  ({T(LicenceOf(i.Pack))})\n  {T(Id(i))}");
         }
 
         return 0;
@@ -197,7 +197,7 @@ public static class Cli
             };
             if (text.Length > 0)
             {
-                Console.WriteLine($"{prop.Name,-12} {text}");
+                Console.WriteLine($"{prop.Name,-12} {T(text, 1200)}");
             }
         }
     }
@@ -237,13 +237,14 @@ public static class Cli
 
         // where it came from and under which licence, next to it: a line per pull, and the licence text once per pack
         await File.AppendAllTextAsync(Path.Combine(to, "AssetShelf.provenance.jsonl"), Provenance.Line(item, item.Pack.Provenance, "shelf pull") + "\n");
-        if (item.Pack.Provenance?.Licence.Copies.LastOrDefault(c => c.Kind == "licence") is { } copy && Provenance.CopyPath(copy, item.Pack.IndexDir, LibraryRoot) is { } licenceFile)
+        // the licence text as recorded: a real file in the pack's index (or the library's licences/), with its checksum
+        if (item.Pack.Provenance?.Licence.Copies.LastOrDefault(c => c.Kind == "licence") is { } copy && Provenance.CopyPath(copy, item.Pack.IndexDir, LibraryRoot) is { } licenceFile
+            && (RealInside(item.Pack.IndexDir, licenceFile) || RealInside(Path.Combine(LibraryRoot, "licences"), licenceFile))
+            && Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(licenceFile))) == copy.Sha256)
         {
-            string dest = Path.Combine(to, "licences", $"{item.Pack.Id}.txt");
-            if (!File.Exists(dest))
+            string dest = Path.Combine(to, "licences", $"{SafeName(item.Pack.Id)}.txt");
+            if (CopyInside(Path.GetDirectoryName(licenceFile)!, licenceFile, to, dest))
             {
-                Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
-                File.Copy(licenceFile, dest);
                 written.Add(dest);
             }
         }
@@ -255,7 +256,7 @@ public static class Cli
         }
         else
         {
-            Console.WriteLine($"{item.Name}: {written.Count} files into {to} ({LicenceOf(item.Pack)}){(credit.Length > 0 ? $"\ncredit: {credit}" : "")}");
+            Console.WriteLine($"{T(item.Name)}: {written.Count} files into {to} ({T(LicenceOf(item.Pack))}){(credit.Length > 0 ? $"\ncredit: {T(credit)}" : "")}");
         }
 
         return 0;
@@ -266,20 +267,22 @@ public static class Cli
     {
         string raw = Path.Combine(item.Pack.FilesDir, "raw");
         string[] parts = item.Path.Split('/');
+        if (parts.Any(p => p is "" or "." or ".." || p.Contains('\\') || p.Contains(':')))
+        {
+            throw new InvalidOperationException($"{T(item.Path)} is not a path inside its pack.");
+        }
+
         string top = Path.Combine(raw, Path.Combine(parts[..Math.Min(2, parts.Length - 1)]));
-        string dest = Path.Combine(to, item.Pack.Id);
+        string dest = Path.Combine(to, SafeName(item.Pack.Id));
         var written = new List<string>();
-        foreach (string f in Directory.Exists(top) ? Directory.EnumerateFiles(top, "*", SearchOption.AllDirectories) : [Path.Combine(raw, item.Path)])
+        // never a link (followed out of the pack), never outside the pack or the target, never over a file already there
+        foreach (string f in Directory.Exists(top) ? Directory.EnumerateFiles(top, "*", NoLinks) : [Path.Combine(raw, item.Path)])
         {
             string d = Path.Combine(dest, Path.GetRelativePath(raw, f));
-            if (File.Exists(d) || new FileInfo(f).LinkTarget is not null)
+            if (CopyInside(raw, f, to, d))
             {
-                continue;  // never overwrite, never follow a link out of the pack
+                written.Add(d);
             }
-
-            Directory.CreateDirectory(Path.GetDirectoryName(d)!);
-            File.Copy(f, d);
-            written.Add(d);
         }
 
         return written;
@@ -294,6 +297,12 @@ public static class Cli
         }
 
         Sender.UnrealPlan plan = Sender.PlanUnreal(items, project);
+        string content = Path.Combine(project, "Content");
+        if (plan.Copy.FirstOrDefault(c => !Inside(content, c.Dst) || !RealInside(items.First().Pack.FilesDir, c.Src)) is { Src: not null } bad)
+        {
+            throw new InvalidOperationException($"{T(bad.Src)} would not stay inside the pack and the project's Content: nothing copied.");
+        }
+
         Sender.ToUnreal(plan);
         return [.. plan.Copy.Select(c => c.Dst)];
     }
@@ -304,23 +313,76 @@ public static class Cli
     {
         var (dir, _) = await Sender.ExportAsync(item, _settings!, () =>
             throw new InvalidOperationException($"{item.Name} needs Unreal Engine to export: use Asset Shelf's Send buttons, or --format unreal into an Unreal project."));
-        string dest = Path.Combine(to, item.Pack.Id, item.Name);
+        string dest = Path.Combine(to, SafeName(item.Pack.Id), SafeName(item.Name));
         var written = new List<string>();
-        foreach (string f in Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories).Where(f => !Path.GetFileName(f).StartsWith('.')))
+        foreach (string f in Directory.EnumerateFiles(dir, "*", NoLinks).Where(f => !Path.GetFileName(f).StartsWith('.')))
         {
             string d = Path.Combine(dest, Path.GetRelativePath(dir, f));
-            if (File.Exists(d))
+            if (CopyInside(dir, f, to, d))
             {
-                continue;
+                written.Add(d);
             }
-
-            Directory.CreateDirectory(Path.GetDirectoryName(d)!);
-            File.Copy(f, d);
-            written.Add(d);
         }
 
         return written;
     }
+
+    // ---- staying inside: names and paths come from stores, packs and team servers ----
+
+    /// <summary>One folder or file name made safe: letters, digits, '.', '-', '_' only, never starting with a dot.</summary>
+    private static string SafeName(string s)
+    {
+        string t = new([.. s.Select(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_' or '.' ? c : '_')]);
+        t = t.TrimStart('.');
+        return t.Length == 0 ? "asset" : t[..Math.Min(t.Length, 120)];
+    }
+
+    /// <summary>True when <paramref name="path"/> is <paramref name="root"/> or inside it, after resolving "..".</summary>
+    private static bool Inside(string root, string path)
+    {
+        string r = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root)), f = Path.GetFullPath(path);
+        return f == r || f.StartsWith(r + Path.DirectorySeparatorChar, StringComparison.Ordinal);
+    }
+
+    /// <summary>A real file inside <paramref name="root"/>: no link on the way from the root to it.</summary>
+    private static bool RealInside(string root, string file)
+    {
+        if (!Inside(root, file) || !File.Exists(file))
+        {
+            return false;
+        }
+
+        string r = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
+        for (string? d = Path.GetFullPath(file); d is not null && d.Length > r.Length; d = Path.GetDirectoryName(d))
+        {
+            FileSystemInfo fi = File.Exists(d) ? new FileInfo(d) : new DirectoryInfo(d);
+            if (fi.LinkTarget is not null)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static readonly EnumerationOptions NoLinks = new() { RecurseSubdirectories = true, AttributesToSkip = FileAttributes.ReparsePoint, IgnoreInaccessible = true };
+
+    /// <summary>Copies <paramref name="src"/> to <paramref name="dest"/> when the source is a real file inside
+    /// <paramref name="from"/>, the destination is inside <paramref name="to"/>, and nothing is there yet.</summary>
+    private static bool CopyInside(string from, string src, string to, string dest)
+    {
+        if (!RealInside(from, src) || !Inside(to, dest) || File.Exists(dest))
+        {
+            return false;
+        }
+
+        Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
+        File.Copy(src, dest);
+        return true;
+    }
+
+    /// <summary>Text from a pack or a store, for the terminal: no control characters, capped.</summary>
+    private static string T(string? s, int max = 300) => Untrusted.Text(s ?? "", max).Replace('\n', ' ');
 
     // ---- the skill ----
 
