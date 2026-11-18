@@ -130,7 +130,7 @@ public sealed class Provenance
 
     /// <summary>Only a store's summary of the licence is saved, not the binding text.</summary>
     public static bool SummaryOnly(Provenance? p, string indexDir, string libraryRoot) =>
-        LicenceNotSaved(p, indexDir, libraryRoot) && p!.Licence.Copies.Any(c => c.Kind == "summary" && CopyPath(c, indexDir, libraryRoot) is not null);
+        p is not null && LicenceNotSaved(p, indexDir, libraryRoot) && p.Licence.Copies.Any(c => c.Kind == "summary" && CopyPath(c, indexDir, libraryRoot) is not null);
 
     /// <summary>Bought, with no receipt on file: the only case marked as a warning (free packs only show in the filter).</summary>
     public static bool BoughtWithoutReceipt(Provenance? p) => p is { Acquired.How: "bought", Receipts.Count: 0 };

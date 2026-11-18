@@ -27,6 +27,8 @@ Status: 0.1, used daily on Linux; Windows and macOS are untested.
 - **Send to Groundwork.** Meshes become self-contained .glb files (textures embedded, capped at 2048 px; origin at the
   base, metres, Y up) delivered to Groundwork's inbox (`~/.local/share/Groundwork/inbox`, `%LOCALAPPDATA%\Groundwork\inbox`
   on Windows); the open map takes them in, and the status bar shows Groundwork's answer.
+- **Sounds by what they sound like.** Measured from the audio (no AI): length, loudness, pitch, brightness, attack,
+  clean loops, channels. Filter and order the Sounds tab by them and play a sound from its details.
 - **Spin in 3D.** A turntable rendered once by headless Blender, turned by dragging.
 - **Library sync.** Fab (sign in with your Epic account) and itch.io (an API key): what is new or updated, downloaded
   and checked file by file, then indexed. A preview first; nothing is downloaded until you say so.

@@ -12,6 +12,7 @@ using CUE4Parse.UE4.Versions;
 static class Sounds
 {
     const int MaxWav = 512 << 20;
+    static string _pack = "";
 
     public static int Run(string[] args)
     {
@@ -35,6 +36,7 @@ static class Sounds
             return 2;
         }
 
+        _pack = pack;
         var provider = new DefaultFileProvider(new DirectoryInfo(Path.Combine(pack, "Content")), SearchOption.AllDirectories, new VersionContainer(EGame.GAME_UE5_LATEST));
         provider.Initialize();
         provider.Mount();
@@ -86,6 +88,31 @@ static class Sounds
 
     static byte[]? Wav(DefaultFileProvider provider, string key) => Wav(provider, key, out _);
 
+    /// <summary>A WAV kept whole inside the package (some editor packages store it in a form the reader does not
+    /// follow): the first "RIFF....WAVE" whose stated size fits in the file.</summary>
+    static byte[]? Inline(string file)
+    {
+        if (!File.Exists(file) || new FileInfo(file).Length > MaxWav)
+        {
+            return null;
+        }
+
+        byte[] b = File.ReadAllBytes(file);
+        for (int i = 0; i + 12 <= b.Length; i++)
+        {
+            if (b[i] == 'R' && b[i + 1] == 'I' && b[i + 2] == 'F' && b[i + 3] == 'F' && b[i + 8] == 'W' && b[i + 9] == 'A' && b[i + 10] == 'V' && b[i + 11] == 'E')
+            {
+                long size = BitConverter.ToUInt32(b, i + 4) + 8L;
+                if (size > 44 && i + size <= b.Length)
+                {
+                    return b[i..(int)(i + size)];
+                }
+            }
+        }
+
+        return null;
+    }
+
     /// <summary>The WAV an editor package keeps for its sound (null when it has none it can give); name is the sound's
     /// object name, null when the package holds no sound.</summary>
     static byte[]? Wav(DefaultFileProvider provider, string key, out string? name)
@@ -99,15 +126,31 @@ static class Sounds
             }
 
             name = wave.Name;
-            if (wave.EditorRawData is { PayloadSize: > 0 and <= MaxWav } ed && ed.Payload?.Decompress() is { Length: > 12 } d)
+            string file = Path.Combine(_pack, key);  // keys are Content/…, relative to the pack's unreal folder
+            if (Environment.GetEnvironmentVariable("SHELF_DEBUG") is not null)
+            {
+                Console.Error.WriteLine($"{key}: streaming {wave.bStreaming}, editor {wave.EditorRawData?.PayloadSize} ({wave.EditorRawData?.Flags}), raw {wave.RawData?.Data?.Length}, compressed {wave.CompressedFormatData?.Formats.Count}");
+            }
+
+            if (wave.EditorRawData is { PayloadSize: > 0 and <= MaxWav } ed && ed.Payload?.Decompress() is { Length: > 12 } d && d[0] == 'R' && d[1] == 'I')
             {
                 return d;
             }
 
-            return wave.RawData?.Data is { Length: > 12 and <= MaxWav } r ? r : null;
+            if (wave.RawData?.Data is { Length: > 12 and <= MaxWav } r && r[0] == 'R' && r[1] == 'I')
+            {
+                return r;
+            }
+
+            return Inline(file);
         }
         catch (Exception e) when (e is not OutOfMemoryException)
         {
+            if (Environment.GetEnvironmentVariable("SHELF_DEBUG") is not null)
+            {
+                Console.Error.WriteLine($"{key}: {e.GetType().Name}: {e.Message}");
+            }
+
             return null;
         }
     }

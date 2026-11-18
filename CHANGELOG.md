@@ -16,6 +16,11 @@ Entries before 0.2.0 were written afterwards, from the git history.
 - **Search by meaning, as an add-on:** `shelf-meaning`, installed on its own, finds assets by a description or by
   likeness to another asset, from their pictures, with a model run on this computer. Asset Shelf and `shelf` work
   without it and carry none of its libraries; `shelf search --meaning` uses it when it is there.
+- **A sound browser.** A pack's sounds can be measured from their own audio, no AI involved: length, how loud they
+  get, a pitch estimate, how bright they sound, attack, whether they loop cleanly, mono or stereo. The Sounds tab then
+  filters and orders by those (a new Sound group), a sound's details show them, and **Play** plays it through the
+  system's player. `shelf search --sound long,low,oneshot …` does the same for an agent. You still pick every sound.
+  Packs are measured by `tools/index_library.py --sounds` (new packs as they are indexed).
 - **A Claude Code skill** (`shelf install-skill`), so a coding agent in a game project finds and pulls assets the same
   way.
 

@@ -33,6 +33,12 @@ If the `shelf-meaning` add-on is installed, `shelf search --meaning "a slime mon
 picture shows, and `--like <asset id>` finds ones that look like it; results carry a `score` (a big drop means the rest
 are weak). Without the add-on it says so: use word search. Don't install it yourself.
 
+**Sounds.** Where a pack's sounds were measured, `--sound` narrows by what was measured from the audio itself:
+`short` (< 1 s), `medium`, `long` (> 5 s); `quiet`, `loud`; `low` (< 250 Hz), `mid`, `high` (> 1 kHz), `unpitched`;
+`dark`, `bright`; `loops`, `oneshot`; `mono`, `stereo`. Several words of one kind mean any of them; different kinds
+must all fit, e.g. `shelf search horn --kind Sound --sound long,low,oneshot`. `show` gives the numbers (`sound`). The
+user picks every sound: propose a short list with what each measures, never choose one for them.
+
 An asset id is `<pack id>/<asset path>`, as search prints it. Words match whole tags and parts of names, all of them
 must match, and there is no stemming: try synonyms and broader words when a search comes back empty. Without
 `--kind`, search covers the usual kinds (meshes, characters, animations, effects, sounds, blueprints, maps); ask for

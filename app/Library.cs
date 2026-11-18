@@ -50,6 +50,9 @@ public sealed class Item
     public HashSet<string> Tags { get; } = new(StringComparer.OrdinalIgnoreCase);
     public string SearchText { get; set; } = "";
 
+    /// <summary>What was measured from a sound's audio (index/&lt;pack&gt;/sounds.json, ShelfIndex sounds); null when not measured.</summary>
+    public SoundFacts? Sound { get; set; }
+
     /// <summary>A map or prop on the team server (see <see cref="Team"/>); null for a pack's asset.</summary>
     public Team.Published? Published { get; init; }
 
@@ -177,7 +180,37 @@ public sealed partial class Library
             items.Add(item);
         }
 
+        ReadSounds(dir, pack);
         return (pack, items);
+    }
+
+    /// <summary>index/&lt;pack&gt;/sounds.json, when the pack's sounds were measured: their facts onto the items.</summary>
+    private static void ReadSounds(string dir, Pack pack)
+    {
+        string file = System.IO.Path.Combine(dir, "sounds.json");
+        if (!File.Exists(file))
+        {
+            return;
+        }
+
+        try
+        {
+            using JsonDocument d = JsonDocument.Parse(File.ReadAllBytes(file));
+            foreach (JsonProperty s in d.RootElement.GetProperty("sounds").EnumerateObject())
+            {
+                if (pack.ByPackage.Values.FirstOrDefault(i => i.Path == s.Name) is { } item)
+                {
+                    JsonElement v = s.Value;
+                    double? N(string k) => v.TryGetProperty(k, out JsonElement e) && e.ValueKind == JsonValueKind.Number ? e.GetDouble() : null;
+                    item.Sound = new SoundFacts(N("seconds") ?? 0, N("loudDb") ?? -120, N("pitchHz"), N("brightnessHz") ?? 0, N("attackMs"),
+                        v.TryGetProperty("loops", out JsonElement l) && l.ValueKind == JsonValueKind.True, (int)(N("channels") ?? 1));
+                }
+            }
+        }
+        catch (Exception e) when (e is JsonException or InvalidOperationException or KeyNotFoundException or IOException)
+        {
+            Log.Write("library", $"{pack.Id}: sounds.json not read ({e.Message})");
+        }
     }
 
     /// <summary>Links meshes that several packs ship (the same kind, name, triangle and vertex counts and size) and tags
@@ -339,4 +372,53 @@ public sealed partial class Library
         int dot = path.LastIndexOf('.');
         return dot > 0 ? path[..dot] : path;
     }
+}
+
+/// <summary>A sound's measured facts: seconds, loudness of its loudest 400 ms (dBFS), pitch (null when nothing repeats
+/// clearly), spectral centroid, attack, and whether it plays on into itself.</summary>
+public sealed record SoundFacts(double Seconds, double LoudDb, double? PitchHz, double BrightnessHz, double? AttackMs, bool Loops, int Channels)
+{
+    /// <summary>The filter words, in groups: within a group any may match, across groups all must.</summary>
+    public static readonly (string Group, string Key, string Label, string Tip)[] Words =
+    [
+        ("length", "short", "Short", "Under a second."),
+        ("length", "medium", "Medium", "One to five seconds."),
+        ("length", "long", "Long", "Over five seconds."),
+        ("loudness", "quiet", "Quiet", "Its loudest moment is under -24 dB."),
+        ("loudness", "loud", "Loud", "Its loudest moment is over -12 dB."),
+        ("pitch", "low", "Low", "A clear pitch under 250 Hz."),
+        ("pitch", "mid", "Middle", "A clear pitch from 250 Hz to 1 kHz."),
+        ("pitch", "high", "High", "A clear pitch over 1 kHz."),
+        ("pitch", "unpitched", "No clear pitch", "Noise, hits, most effects."),
+        ("tone", "dark", "Dark", "Most of its energy under 1.5 kHz."),
+        ("tone", "bright", "Bright", "Most of its energy over 4 kHz."),
+        ("loop", "loops", "Loops", "Plays on into itself cleanly."),
+        ("loop", "oneshot", "One-shot", "Does not loop cleanly."),
+        ("channels", "mono", "Mono", "One channel."),
+        ("channels", "stereo", "Stereo", "Two channels or more."),
+    ];
+
+    public bool Is(string key) => key switch
+    {
+        "short" => Seconds < 1,
+        "medium" => Seconds is >= 1 and <= 5,
+        "long" => Seconds > 5,
+        "quiet" => LoudDb < -24,
+        "loud" => LoudDb > -12,
+        "low" => PitchHz < 250,
+        "mid" => PitchHz is >= 250 and <= 1000,
+        "high" => PitchHz > 1000,
+        "unpitched" => PitchHz is null,
+        "dark" => BrightnessHz < 1500,
+        "bright" => BrightnessHz > 4000,
+        "loops" => Loops,
+        "oneshot" => !Loops,
+        "mono" => Channels == 1,
+        "stereo" => Channels >= 2,
+        _ => false,
+    };
+
+    /// <summary>True when the facts fit the chosen words (none chosen: always; not measured: never).</summary>
+    public static bool Fits(SoundFacts? s, IReadOnlyCollection<string> on) =>
+        on.Count == 0 || (s is not null && Words.Where(w => on.Contains(w.Key)).GroupBy(w => w.Group).All(g => g.Any(w => s.Is(w.Key))));
 }

@@ -23,6 +23,7 @@ try
     q.Source.Url = "https://fab.com/x";
     q.Source.Aggregator = false;
     Check(!Provenance.OriginalsMissing(q, ["c.fbx"]), "a store's pack never asks for originals");
+    Check(!Provenance.SummaryOnly(null, d, d) && Provenance.LicenceNotSaved(null, d, d) && Provenance.UnknownOrigin(null), "a pack with no provenance at all is just flagged");
     Console.WriteLine("all passed");
 }
 finally

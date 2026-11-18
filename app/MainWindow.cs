@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Presenters;
@@ -41,6 +42,10 @@ public sealed class MainWindow : Window
     private readonly FoldGroup _packsGroup = new("Packs", open: false);
     private readonly FoldGroup _licenceGroup = new("Licence");
     private readonly FoldGroup _originGroup = new("Origin");
+    private readonly FoldGroup _soundGroup = new("Sound", open: false);
+    private readonly HashSet<string> _soundOn = [];  // measured-sound words (SoundFacts.Words): short, loud, low, loops…
+    private string? _soundSort;  // length, loudness, pitch or brightness: sounds in that order
+    private Process? _playing;
     private readonly HashSet<string> _originOn = [];  // unknown, licence, receipt: show only packs with that gap
 
     // per pack: (no source page, no saved licence copy, no receipt), worked out once (file checks on the share)
@@ -406,7 +411,7 @@ public sealed class MainWindow : Window
                 },
             },
         };
-        var filters = new StackPanel { Children = { leftHead, _activeTags, _keepGroup, _tagsGroup, _licenceGroup, _originGroup, _packsGroup } };
+        var filters = new StackPanel { Children = { leftHead, _activeTags, _keepGroup, _tagsGroup, _soundGroup, _licenceGroup, _originGroup, _packsGroup } };
         var leftPanel = new Border
         {
             Width = 270,
@@ -719,7 +724,7 @@ public sealed class MainWindow : Window
     {
         string[] words = (_search.Box.Text ?? "").ToLowerInvariant().Split(' ', StringSplitOptions.RemoveEmptyEntries);
         return _lib.Items.Where(i => !_packOff.Contains(i.Pack.Id) && !_licenceOff.Contains(LicenceOf(i.Pack)) && OriginMatch(i.Pack)
-            && _tagOn.All(t => i.Tags.Contains(t)) && words.All(w => i.SearchText.Contains(w, StringComparison.Ordinal))
+            && _tagOn.All(t => i.Tags.Contains(t)) && words.All(w => i.SearchText.Contains(w, StringComparison.Ordinal)) && SoundFacts.Fits(i.Sound, _soundOn)
             && (_collection is null || (_keep.Members(_collection)?.Contains(Collections.Key(i)) ?? false)));
     }
 
@@ -755,7 +760,7 @@ public sealed class MainWindow : Window
         List<Item> pool = Pool().ToList();
         Dictionary<string, int> perKind = pool.CountBy(i => i.Kind).ToDictionary(k => k.Key, k => k.Value);
         _shown = pool.Where(i => _kind is null ? Library.DefaultKinds.Contains(i.Kind) : i.Kind == _kind)
-            .OrderBy(i => Array.IndexOf(Library.Kinds, i.Kind)).ThenBy(i => i.Pack.Title, StringComparer.OrdinalIgnoreCase)
+            .OrderBy(i => Array.IndexOf(Library.Kinds, i.Kind)).ThenBy(i => SoundKey(i)).ThenBy(i => i.Pack.Title, StringComparer.OrdinalIgnoreCase)
             .ThenBy(i => i.Name, StringComparer.OrdinalIgnoreCase).ToList();
 
         int allCount = pool.Count(i => Library.DefaultKinds.Contains(i.Kind));
@@ -871,7 +876,115 @@ public sealed class MainWindow : Window
         }
 
         _originGroup.Count = indexed.Count(p => OriginOf(p) is { Unknown: true } or { Licence: true }).ToString();
+        FillSoundGroup();
     }
+
+    /// <summary>The Sound group: measured sounds by length, loudness, pitch, tone, looping and channels (any word within
+    /// a line of the same kind, all kinds together), and an order for them. Shown when any sound was measured.</summary>
+    private void FillSoundGroup()
+    {
+        var measured = _lib.Items.Where(i => i.Sound is not null).ToList();
+        _soundGroup.IsVisible = measured.Count > 0;
+        _soundGroup.Body.Children.Clear();
+        if (measured.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var (_, key, label, tip) in SoundFacts.Words)
+        {
+            int n = measured.Count(i => i.Sound!.Is(key));
+            _soundGroup.Body.Children.Add(new CheckRow(label, $"{n:N0}", _soundOn.Contains(key), tip, on => Toggle(_soundOn, key, on)));
+        }
+
+        foreach (var (key, label) in new[] { ("length", "Shortest first"), ("loudness", "Quietest first"), ("pitch", "Lowest first"), ("brightness", "Darkest first") })
+        {
+            _soundGroup.Body.Children.Add(new CheckRow(label, "", _soundSort == key, "Put measured sounds in this order.", on =>
+            {
+                _soundSort = on ? key : null;
+                Refresh();
+            }));
+        }
+
+        _soundGroup.Count = _soundOn.Count > 0 ? $"{_soundOn.Count}" : $"{measured.Count:N0}";
+    }
+
+    private static bool IsWav(string path) => path.EndsWith(".wav", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Plays a sound through the system's own player: an Unreal sound's WAV is taken out of its package once
+    /// (ShelfIndex sounds --extract) and kept in the cache. Pressing again, or another sound, stops the one playing.</summary>
+    private async Task PlayAsync(Item item, Button button)
+    {
+        if (_playing is { HasExited: false } now)
+        {
+            now.Kill();
+            _playing = null;
+            return;
+        }
+
+        try
+        {
+            if (!await FetchAsync([item]))
+            {
+                return;
+            }
+
+            string wav;
+            if (item.Raw)
+            {
+                wav = Path.Combine(item.Pack.FilesDir, "raw", item.Path);
+            }
+            else
+            {
+                string key = Convert.ToHexStringLower(System.Security.Cryptography.MD5.HashData(System.Text.Encoding.UTF8.GetBytes(item.Pack.Id + "/" + item.Path)));
+                wav = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".cache", "asset-shelf", "sounds", key + ".wav");
+                if (!File.Exists(wav))
+                {
+                    string shelfIndex = Run.ShelfIndex(_settings) ?? throw new InvalidOperationException("ShelfIndex is missing next to the app.");
+                    Directory.CreateDirectory(Path.GetDirectoryName(wav)!);
+                    button.IsEnabled = false;
+                    _status.Text = $"{item.Name}: taking the sound out of its package…";
+                    using Process x = Process.Start(Run.Capped("2G", false, shelfIndex, "sounds", "--pack", Path.Combine(item.Pack.FilesDir, "unreal"), "--extract", item.Path, "--wav", wav))!;
+                    await x.WaitForExitAsync();
+                    if (x.ExitCode != 0 || !File.Exists(wav))
+                    {
+                        throw new InvalidOperationException("its package holds no audio this can play");
+                    }
+                }
+            }
+
+            string[] player = OperatingSystem.IsWindows()
+                ? ["powershell", "-NoProfile", "-Command", $"(New-Object Media.SoundPlayer '{wav.Replace("'", "''")}').PlaySync()"]
+                : OperatingSystem.IsMacOS() ? ["afplay", wav]
+                : new[] { "pw-play", "paplay", "aplay" }.Where(p => (Environment.GetEnvironmentVariable("PATH") ?? "").Split(':').Any(d => File.Exists(Path.Combine(d, p)))).Take(1).Select(p => new[] { p, wav }).FirstOrDefault()
+                    ?? throw new InvalidOperationException("no player found (pw-play, paplay or aplay)");
+            var psi = new ProcessStartInfo(player[0]) { UseShellExecute = false };
+            foreach (string a in player[1..])
+            {
+                psi.ArgumentList.Add(a);
+            }
+
+            _playing = Process.Start(psi);
+            _status.Text = $"{item.Name}: playing (Play again stops it)";
+        }
+        catch (Exception e) when (e is InvalidOperationException or System.ComponentModel.Win32Exception or IOException)
+        {
+            _status.Text = $"{item.Name}: cannot play: {e.Message}";
+        }
+        finally
+        {
+            button.IsEnabled = true;
+        }
+    }
+
+    /// <summary>The chosen sound order (0 for everything else, so other kinds keep theirs).</summary>
+    private double SoundKey(Item i) => i.Sound is not { } s || _soundSort is null ? 0 : _soundSort switch
+    {
+        "length" => s.Seconds,
+        "loudness" => s.LoudDb,
+        "pitch" => s.PitchHz ?? 1e6,
+        _ => s.BrightnessHz,
+    };
 
     /// <summary>Each filter group's "unselect" action, worded for what it would do now.</summary>
     private void GroupActions()
@@ -1583,6 +1696,15 @@ public sealed class MainWindow : Window
             PublishedDetails(item, published);
             return;
         }
+        if (item.Kind == "Sound" && (!item.Raw || IsWav(item.Path)))
+        {
+            Button play = Chrome.IconTextButton("play", "Play", "Play this sound (again to stop it).");
+            play.HorizontalAlignment = HorizontalAlignment.Stretch;
+            play.Margin = new Thickness(10, 0, 10, 6);
+            play.Click += async (_, _) => await PlayAsync(item, play);
+            _details.Children.Add(play);
+        }
+
         if (item.Raw || item.Kind is "Mesh" or "Character")
         {
             Button spin = Chrome.IconTextButton("rotate-ccw", "Spin in 3D", "Turn the model round: rendered once by Blender (an Unreal asset is exported first), then drag to turn it.");
@@ -1674,6 +1796,16 @@ public sealed class MainWindow : Window
         if (!item.Raw && EngineCheck.Parse(item.Pack.Engine) is { } made)
         {
             about.Body.Children.Add(InfoRow("Unreal", $"saved with {made.Major}.{made.Minor}"));
+        }
+
+        if (item.Sound is { } snd)
+        {
+            about.Body.Children.Add(InfoRow("Length", $"{snd.Seconds:0.00} s"));
+            about.Body.Children.Add(InfoRow("Loudness", $"{snd.LoudDb:0} dB at its loudest"));
+            about.Body.Children.Add(InfoRow("Pitch", snd.PitchHz is { } hz ? $"about {hz:0} Hz" : "no clear pitch"));
+            about.Body.Children.Add(InfoRow("Tone", $"{(snd.BrightnessHz < 1500 ? "dark" : snd.BrightnessHz > 4000 ? "bright" : "middle")} ({snd.BrightnessHz / 1000:0.0} kHz)"));
+            about.Body.Children.Add(InfoRow("Attack", snd.AttackMs is { } ms ? $"{ms:0} ms" : "-"));
+            about.Body.Children.Add(InfoRow("Loops", snd.Loops ? "cleanly" : "no (a one-shot)"));
         }
 
         foreach (var (text, blocking) in Safety.Lines(item.Pack))

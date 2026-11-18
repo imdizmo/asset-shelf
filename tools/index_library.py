@@ -9,7 +9,7 @@ A pack with unreal/Content is indexed in Unreal (index_pack.py); a pack with onl
 state is the index folder itself (a pack is done when <index>/<pack>/index.json exists), so it can be stopped and
 started again at any time.
 """
-import argparse, os, shutil, signal, subprocess, sys, time
+import argparse, json, os, shutil, signal, subprocess, sys, time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 # a release ships ShelfIndex as a program beside its sources; from source it is built with dotnet build -c Release
@@ -46,6 +46,7 @@ def main():
     a.add_argument('--ready-file')
     a.add_argument('--order', help='a text file of pack folder names, indexed first in that order')
     a.add_argument('--limit', type=int, default=0)
+    a.add_argument('--sounds', action='store_true', help='only measure the sounds of indexed Unreal packs not measured yet (or in --redo)')
     a.add_argument('--timeout', type=int, default=4 * 3600)
     a.add_argument('--embedded', action='store_true', help='with --unreal: only the pictures saved in the asset files')
     a.add_argument('--unreal', action='store_true',
@@ -59,6 +60,8 @@ def main():
         first = [l.strip() for l in open(o.order) if l.strip() in names]
         names = first + [n for n in names if n not in set(first)]
     redo = {l.strip() for l in open(o.redo)} if o.redo else set()
+    if o.sounds:
+        return measure_sounds(o, names, redo)
     ddc = os.path.join(os.path.dirname(os.path.abspath(o.host)), 'ddc')
     done = failed = 0
     for n in names:
@@ -92,6 +95,10 @@ def main():
             else:
                 ok = run([sys.executable, '-I', os.path.join(HERE, 'index_raw.py'), '--pack', os.path.join(src, 'raw'), '--out', out], f, o.timeout)
         ok = ok and os.path.exists(os.path.join(out, 'index.json'))
+        if ok and ue and has_sounds(out):
+            with open(log, 'a') as f:
+                if not run([*SHELF_INDEX_CMD, 'sounds', '--pack', os.path.join(src, 'unreal'), '--out', out], f, o.timeout):
+                    print('   sounds not measured (the pack still shows; its sounds have no measures)', flush=True)
         # anything in the pack that can run code, whether or not indexing worked: cheap (names and small text files)
         with open(log, 'a') as f:
             if not run([sys.executable, '-I', os.path.join(HERE, 'safety_scan.py'), src, out], f, 600):
@@ -105,6 +112,33 @@ def main():
         if o.limit and done + failed >= o.limit:
             break
     print('INDEX LIBRARY DONE', done, 'indexed,', failed, 'failed', flush=True)
+
+
+def has_sounds(out):
+    try:
+        with open(os.path.join(out, 'index.json'), encoding='utf-8') as f:
+            return any(a.get('class') == 'SoundWave' for a in json.load(f).get('assets', []))
+    except (OSError, ValueError):
+        return False
+
+
+def measure_sounds(o, names, redo):
+    """--sounds: measures the sounds of indexed Unreal packs that have none measured yet (or are in --redo), without
+    indexing anything again. --limit stops after that many packs."""
+    done = 0
+    for n in names:
+        src, out = os.path.join(o.packs, n), os.path.join(o.index, n)
+        if not os.path.isdir(os.path.join(src, 'unreal', 'Content')) or not has_sounds(out):
+            continue
+        if os.path.exists(os.path.join(out, 'sounds.json')) and n not in redo:
+            continue
+        t0 = time.time()
+        ok = subprocess.run([*SHELF_INDEX_CMD, 'sounds', '--pack', os.path.join(src, 'unreal'), '--out', out], timeout=o.timeout).returncode == 0
+        print(time.strftime('%H:%M:%S'), 'SOUNDS' if ok else 'FAIL  ', n, f'{time.time() - t0:.0f}s', flush=True)
+        done += 1
+        if o.limit and done >= o.limit:
+            break
+    print('MEASURE SOUNDS DONE', done, 'packs', flush=True)
 
 
 if __name__ == '__main__':

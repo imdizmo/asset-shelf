@@ -36,6 +36,7 @@ public static class Cli
               shelf search <words...> [--kind Mesh,Character,...] [--pack <words>] [--licence <words>] [--limit 20] [--json]
               shelf show <pack id | asset id> [--json]
               shelf pull <asset id> --to <folder> [--format model|unreal|raw] [--force] [--json]
+              shelf search <words...> --sound short,loud,low,unpitched,dark,loops,mono,...   (measured sounds; any word of a kind, all kinds)
               shelf search --meaning "<description>" | --like <asset id> [--kind ...] [--pack ...] [--limit 20] [--json]
                                              (needs the shelf-meaning add-on, installed on its own)
               shelf install-skill            (puts the asset-shelf skill in ~/.claude/skills)
@@ -70,12 +71,17 @@ public static class Cli
             return await SearchByMeaning(args);
         }
 
-        string[] flags = ["--kind", "--pack", "--licence", "--limit", "--meaning", "--like"];
+        string[] flags = ["--kind", "--pack", "--licence", "--limit", "--meaning", "--like", "--sound"];
         var free = args.Where((a, i) => !a.StartsWith("--", StringComparison.Ordinal) && (i == 0 || !flags.Contains(args[i - 1]))).ToList();
         string[] query = Words(string.Join(' ', free));
         HashSet<string>? kinds = Option(args, "--kind") is { } k ? new(k.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries), StringComparer.OrdinalIgnoreCase) : null;
         string[] pack = Words(Option(args, "--pack")), licence = Words(Option(args, "--licence"));
         int limit = int.TryParse(Option(args, "--limit"), out int l) ? Math.Clamp(l, 1, 500) : 20;
+        HashSet<string> sound = [.. (Option(args, "--sound") ?? "").Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)];
+        if (sound.FirstOrDefault(w => SoundFacts.Words.All(x => x.Key != w)) is { } unknown)
+        {
+            throw new InvalidOperationException($"--sound takes {string.Join(", ", SoundFacts.Words.Select(w => w.Key))} (not {unknown}).");
+        }
 
         Library lib = await LoadAsync();
         var hits = lib.Items
@@ -83,6 +89,7 @@ public static class Cli
             .Where(i => query.All(w => i.SearchText.Contains(w, StringComparison.Ordinal)))
             .Where(i => pack.All(w => (i.Pack.Title + " " + i.Pack.Id).Contains(w, StringComparison.OrdinalIgnoreCase)))
             .Where(i => licence.All(w => LicenceOf(i.Pack).Contains(w, StringComparison.OrdinalIgnoreCase)))
+            .Where(i => SoundFacts.Fits(i.Sound, sound))
             // ponytail: words in the name count three times; no stemming or synonyms (search by meaning comes later)
             .Select(i => (Item: i, Score: query.Sum(w => i.Name.Contains(w, StringComparison.OrdinalIgnoreCase) ? 3 : 1)))
             .OrderByDescending(h => h.Score).ThenBy(h => h.Item.Name, StringComparer.OrdinalIgnoreCase)
@@ -90,7 +97,7 @@ public static class Cli
 
         if (args.Contains("--json"))
         {
-            Console.WriteLine(JsonSerializer.Serialize(hits.Select(i => new { id = Id(i), name = i.Name, kind = i.Kind, @class = i.Class, pack = i.Pack.Title, licence = LicenceOf(i.Pack), picture = i.Thumb }), Pretty));
+            Console.WriteLine(JsonSerializer.Serialize(hits.Select(i => new { id = Id(i), name = i.Name, kind = i.Kind, @class = i.Class, pack = i.Pack.Title, licence = LicenceOf(i.Pack), picture = i.Thumb, sound = i.Sound }), Pretty));
             return 0;
         }
 
@@ -184,7 +191,7 @@ public static class Cli
                 id = Id(item), name = item.Name, kind = item.Kind, @class = item.Class, raw = item.Raw, pack = item.Pack.Title, packId = item.Pack.Id,
                 licence = LicenceOf(item.Pack), credit = p?.Licence.Credit ?? "", conditions = p?.Licence.Conditions ?? [],
                 original = p?.Source.Originals.GetValueOrDefault(item.Path) ?? (Provenance.IsAggregator(p) ? "not recorded" : null),
-                picture = item.Thumb, info = item.Info, needs = needs.Count, safety = Safety.Of(item.Pack)?.Level ?? "not scanned",
+                picture = item.Thumb, sound = item.Sound, info = item.Info, needs = needs.Count, safety = Safety.Of(item.Pack)?.Level ?? "not scanned",
                 formats = Formats(item),
             };
             Print(o, json);
