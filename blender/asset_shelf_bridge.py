@@ -196,6 +196,23 @@ def wire(m, files, by_role, single, unreal, explicit=None):
     return done
 
 
+def drop_outside_images(roots):
+    """Before writing a file that embeds images (glTF): every image that is not packed in the source and whose real
+    path is outside the asset's own folders, or that is not an image file, is removed. A model can point its textures
+    anywhere on the computer, and none of that may end up inside what is exported. Returns how many were dropped."""
+    allowed = [os.path.realpath(r) for r in roots if r]
+    dropped = 0
+    for img in list(bpy.data.images):
+        if img.packed_file or img.source not in {'FILE', 'SEQUENCE', 'TILED'}:
+            continue
+        real = os.path.realpath(bpy.path.abspath(img.filepath))
+        inside = any(real == a or real.startswith(a + os.sep) for a in allowed)
+        if not inside or not real.lower().endswith(IMAGES):
+            bpy.data.images.remove(img)
+            dropped += 1
+    return dropped
+
+
 def link_textures(objects, tex_dir, unreal=False):
     """Relinks textures whose stored path is from the author's computer, then wires the rest by name: each material
     gets the textures whose names share its words (any, when there is only one material)."""

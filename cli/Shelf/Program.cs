@@ -19,6 +19,7 @@ public static class Cli
                 ["show", var id, .. var rest] => await Show(id, rest),
                 ["pull", var id, .. var rest] => await Pull(id, rest),
                 ["install-skill"] => InstallSkill(),
+                ["prep", var id, .. var rest] => await Prep(id, rest),
                 _ => Usage(),
             };
         }
@@ -39,6 +40,8 @@ public static class Cli
               shelf search <words...> --sound short,loud,low,unpitched,dark,loops,mono,...   (measured sounds; any word of a kind, all kinds)
               shelf search --meaning "<description>" | --like <asset id> [--kind ...] [--pack ...] [--limit 20] [--json]
                                              (needs the shelf-meaning add-on, installed on its own)
+              shelf prep <asset id> --to <folder> [--check] [--fix] [--max-tris N] [--lods 0-4] [--collision]
+                         [--target unreal|godot|groundwork|blender] [--json]   (needs Blender; the asset is only read)
               shelf install-skill            (puts the asset-shelf skill in ~/.claude/skills)
             An asset id is <pack id>/<asset path>, as search prints it. Kinds: Mesh, Character, Animation, VFX, Sound,
             Blueprint, Map, Material, Texture, Other.
@@ -430,6 +433,46 @@ public static class Cli
 
     /// <summary>Text from a pack or a store, for the terminal: no control characters, capped.</summary>
     private static string T(string? s, int max = 300) => Untrusted.Text(s ?? "", max).Replace('\n', ' ');
+
+    // ---- mesh prep ----
+
+    private static async Task<int> Prep(string id, string[] args)
+    {
+        string to = Option(args, "--to") ?? throw new InvalidOperationException("prep needs --to <folder> (outside the library).");
+        Library lib = await LoadAsync();
+        Item item = FindItem(lib, id) ?? throw new InvalidOperationException($"No asset {id}.");
+        if (!MeshPrep.Takes(item))
+        {
+            throw new InvalidOperationException($"{T(item.Name)} ({item.Kind}) is not a model mesh prep can take (meshes, characters, loose model files).");
+        }
+
+        if (Team.Base is not null)
+        {
+            await Team.FetchAsync(Library.Needs(item).Prepend(item));
+        }
+
+        var o = new MeshPrep.Options(
+            CheckOnly: args.Contains("--check"),
+            Fix: args.Contains("--fix"),
+            MaxTris: int.TryParse(Option(args, "--max-tris"), out int m) && m > 0 ? m : null,
+            Lods: int.TryParse(Option(args, "--lods"), out int lods) ? lods : 0,
+            Collision: args.Contains("--collision"),
+            Target: Option(args, "--target") ?? "godot");
+        var report = await MeshPrep.RunAsync(item, _settings!, () =>
+            throw new InvalidOperationException($"{T(item.Name)} needs Unreal Engine to export first: use Asset Shelf's Prepare."), to, o);
+        if (args.Contains("--json"))
+        {
+            Console.WriteLine(report.ToJsonString(Pretty));
+            return 0;
+        }
+
+        foreach (string line in MeshPrep.Lines(report))
+        {
+            Console.WriteLine(T(line, 2000));
+        }
+
+        return 0;
+    }
 
     // ---- the skill ----
 

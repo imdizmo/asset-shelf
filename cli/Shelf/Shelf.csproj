@@ -11,7 +11,7 @@
     <InvariantGlobalization>true</InvariantGlobalization>
   </PropertyGroup>
   <ItemGroup>
-    <Compile Include="../../app/Library.cs;../../app/Provenance.cs;../../app/Sender.cs;../../app/Run.cs;../../app/Settings.cs;../../app/Team.cs;../../app/Log.cs;../../app/Safety.cs" LinkBase="app" />
+    <Compile Include="../../app/Library.cs;../../app/Provenance.cs;../../app/Sender.cs;../../app/Run.cs;../../app/Settings.cs;../../app/Team.cs;../../app/Log.cs;../../app/Safety.cs;../../app/MeshPrep.cs" LinkBase="app" />
     <EmbeddedResource Include="../../skills/asset-shelf/SKILL.md" LogicalName="SKILL.md" />
   </ItemGroup>
 </Project>

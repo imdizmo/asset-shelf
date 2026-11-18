@@ -4,7 +4,7 @@
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 s="${HOME}/.cache/asset-shelf/scratch/mesh-prep-check"
-rm -rf "${s:?}"; mkdir -p "$s"
+rm -rf "${s:?}"; mkdir -p "$s/asset"
 cat > "$s/make.py" <<'PY'
 import bpy, bmesh, sys
 out = sys.argv[sys.argv.index('--') + 1]
@@ -18,11 +18,19 @@ bm.faces.new([bm.verts.new((0.9 + x * 0.01, 0.9 + y * 0.01, 3)) for x, y in ((0,
 bm.to_mesh(c.data); bm.free()
 bpy.ops.mesh.primitive_uv_sphere_add(segments=128, ring_count=64, location=(4, 0, 0))
 bpy.ops.export_scene.gltf(filepath=out, export_format='GLB')
+# a second copy whose material points at an image elsewhere on the computer
+import os
+secret = os.path.join(os.path.dirname(os.path.dirname(out)), 'elsewhere.png')
+img = bpy.data.images.new('elsewhere', 4, 4); img.filepath_raw = secret; img.file_format = 'PNG'; img.save()
+mat = bpy.data.materials.new('m'); mat.use_nodes = True
+tex = mat.node_tree.nodes.new('ShaderNodeTexImage'); tex.image = img
+c.data.materials.append(mat)
+bpy.ops.wm.save_as_mainfile(filepath=out.replace('.glb', '.blend'))
 PY
 b() { systemd-run --user --scope -q -p MemoryMax=4G -p MemorySwapMax=0 blender -b --factory-startup --disable-autoexec "$@"; }
-b -P "$s/make.py" -- "$s/broken.glb" >/dev/null 2>&1
-before=$(sha256sum "$s/broken.glb")
-prep() { echo "{\"files\":[\"$s/broken.glb\"],\"name\":\"broken\",\"out\":\"$s/$1\",\"fix\":$2,\"maxTris\":5000,\"lods\":1,\"collision\":true,\"target\":\"$3\"}" > "$s/$1.json"
+b -P "$s/make.py" -- "$s/asset/broken.glb" >/dev/null 2>&1
+before=$(sha256sum "$s/asset/broken.glb")
+prep() { echo "{\"files\":[\"$s/asset/broken.glb\"],\"name\":\"broken\",\"out\":\"$s/$1\",\"fix\":$2,\"maxTris\":5000,\"lods\":1,\"collision\":true,\"target\":\"$3\"}" > "$s/$1.json"
          b -P "$root/blender/mesh_prep.py" -- "$s/$1.json" 2>&1 | grep '^ASSETSHELF_PREP' | cut -d' ' -f2-; }
 check() { python3 -I -c "import json,sys; d=json.loads(sys.argv[1]); f,a=d['found'],d['after']; assert $2, d" "$3" && echo "ok $1"; }
 fixed=$(prep fixed true godot)
@@ -32,5 +40,7 @@ check "LOD and collision written" 'd["lods"][1]["triangles"]<2600 and d["collisi
 kept=$(prep kept false unreal)
 check "without repair the faults stay, lightened anyway" 'a["flippedFaces"]==2 and abs(a["triangles"]-5000)<10 and d["collision"]["object"]=="UCX_broken_00"' "$kept"
 [[ -f "$s/kept/broken.fbx" && -f "$s/fixed/broken.glb" && -f "$s/fixed/broken.report.json" ]] && echo "ok files"
-[[ "$(sha256sum "$s/broken.glb")" == "$before" ]] && echo "ok the source is untouched"
+[[ "$(sha256sum "$s/asset/broken.glb")" == "$before" ]] && echo "ok the source is untouched"
+echo "{\"files\":[\"$s/asset/broken.blend\"],\"name\":\"leak\",\"out\":\"$s/leak\",\"target\":\"godot\"}" > "$s/leak.json"
+b -P "$root/blender/mesh_prep.py" -- "$s/leak.json" 2>&1 | grep -q "left out 1 images" && ! grep -a -q "elsewhere" "$s/leak/leak.glb" && echo "ok an image outside the asset's folder is left out"
 echo "all passed"; rm -rf "${s:?}"

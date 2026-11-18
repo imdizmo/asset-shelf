@@ -4,7 +4,7 @@ into the job's out folder.
 
     blender -b --factory-startup --disable-autoexec -P mesh_prep.py -- job.json
 
-job.json: {"files": [...], "textures": dir or null, "unreal": bool, "name": str, "out": dir,
+job.json: {"files": [...], "textures": dir or null, "unreal": bool, "name": str, "out": dir, "checkOnly": bool,
            "fix": bool, "maxTris": int or null, "lods": 0-4, "collision": bool,
            "target": "unreal" | "godot" | "groundwork" | "blender"}
 The report goes to <out>/<name>.report.json and to stdout as one line ASSETSHELF_PREP {...}.
@@ -234,6 +234,10 @@ def main():
         raise SystemExit('no mesh in the asset')
     report = {'name': name, 'target': target, 'source': [os.path.basename(f) for f in job['files']], 'done': []}
     report['found'], diag = look(objs)
+    roots = [os.path.dirname(os.path.abspath(f)) for f in job['files']] + [job.get('textures')]
+    dropped = bridge.drop_outside_images(roots)
+    if dropped:
+        report['done'].append(f'left out {dropped} images the model points to outside its own folders')
 
     if job.get('fix'):
         report['repair'] = repair(objs, diag)
@@ -257,6 +261,13 @@ def main():
         report['done'].append('origin moved to the base')
     bpy.context.view_layer.update()
     report['after'], _ = look(objs) if report['done'] else (report['found'], 0)
+
+    if job.get('checkOnly'):
+        report['files'] = [name + '.report.json']
+        with open(os.path.join(out, name + '.report.json'), 'w') as f:
+            json.dump(report, f, indent=1)
+        print('ASSETSHELF_PREP', json.dumps(report), flush=True)
+        return
 
     ext = {'unreal': '.fbx', 'blender': '.blend'}.get(target, '.glb')
     files = []

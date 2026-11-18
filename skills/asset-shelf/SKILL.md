@@ -68,5 +68,11 @@ never overwritten. Each pull adds a line to `<folder>/AssetShelf.provenance.json
 to `<folder>/licences/<pack id>.txt`. Keep both in the project. Some assets (effects, blueprints, maps) can only go
 into an Unreal project.
 
+**Mesh prep** (needs Blender; skip it if `shelf prep` says Blender is missing): `shelf prep <asset id> --to <folder>
+--check` reports what is wrong with a model (holes, faces turned the wrong way, stray fragments, triangles, size).
+`--fix` repairs, `--max-tris N` lightens keeping the shape, `--lods 2` adds lighter versions, `--collision` a simple
+collision shape, `--target unreal|godot|groundwork|blender` sets the format, axes and units (the report says which).
+The asset itself is never changed: everything goes into `--to`. Show the user the report's "Found" and "Done" lines.
+
 A pull refuses a pack whose safety scan found something that can run code. Don't add `--force` on your own: show the
 user what `show` says and let them decide.

@@ -27,6 +27,10 @@ def main():
     bridge.link_textures(meshes, job.get('textures'), unreal=bool(job.get('unreal')))
     bpy.context.view_layer.update()
     meshes = [o for o in meshes if o.visible_get()]
+    roots = [os.path.dirname(os.path.abspath(f)) for f in job['files']] + [job.get('textures')]
+    dropped = bridge.drop_outside_images(roots)
+    if dropped:
+        print(f'left out {dropped} images outside the asset\'s folders', flush=True)
     if not meshes:
         raise SystemExit('no mesh to send')
     pts = [o.matrix_world @ mathutils.Vector(c) for o in meshes for c in o.bound_box]
