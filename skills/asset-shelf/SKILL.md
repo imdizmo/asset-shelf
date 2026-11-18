@@ -29,6 +29,10 @@ shelf show <pack id>                          # a pack: licence, source, what ki
 shelf show <asset id>                         # an asset: licence, credit, conditions, original source, picture, formats
 ```
 
+If the `shelf-meaning` add-on is installed, `shelf search --meaning "a slime monster"` finds assets by what their
+picture shows, and `--like <asset id>` finds ones that look like it; results carry a `score` (a big drop means the rest
+are weak). Without the add-on it says so: use word search. Don't install it yourself.
+
 An asset id is `<pack id>/<asset path>`, as search prints it. Words match whole tags and parts of names, all of them
 must match, and there is no stemming: try synonyms and broader words when a search comes back empty. Without
 `--kind`, search covers the usual kinds (meshes, characters, animations, effects, sounds, blueprints, maps); ask for

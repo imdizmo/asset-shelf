@@ -13,6 +13,9 @@ Entries before 0.2.0 were written afterwards, from the git history.
   conditions, original source, picture), and pull an asset into a project as a model file with its textures, into an
   Unreal project, or as its loose files. Each pull records where it came from and copies the pack's licence text. It
   refuses a pack whose safety scan found code unless you insist. It uses the team library when a team server is set.
+- **Search by meaning, as an add-on:** `shelf-meaning`, installed on its own, finds assets by a description or by
+  likeness to another asset, from their pictures, with a model run on this computer. Asset Shelf and `shelf` work
+  without it and carry none of its libraries; `shelf search --meaning` uses it when it is there.
 - **A Claude Code skill** (`shelf install-skill`), so a coding agent in a game project finds and pulls assets the same
   way.
 

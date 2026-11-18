@@ -36,6 +36,8 @@ public static class Cli
               shelf search <words...> [--kind Mesh,Character,...] [--pack <words>] [--licence <words>] [--limit 20] [--json]
               shelf show <pack id | asset id> [--json]
               shelf pull <asset id> --to <folder> [--format model|unreal|raw] [--force] [--json]
+              shelf search --meaning "<description>" | --like <asset id> [--kind ...] [--pack ...] [--limit 20] [--json]
+                                             (needs the shelf-meaning add-on, installed on its own)
               shelf install-skill            (puts the asset-shelf skill in ~/.claude/skills)
             An asset id is <pack id>/<asset path>, as search prints it. Kinds: Mesh, Character, Animation, VFX, Sound,
             Blueprint, Map, Material, Texture, Other.
@@ -45,47 +47,15 @@ public static class Cli
 
     // ---- the library, as the app sees it ----
 
-    private static Settings? _settings;
+    private static Settings? _settings => Shelves.Settings;
 
-    private static async Task<Library> LoadAsync()
-    {
-        _settings = Settings.Load();
-        string packs = _settings.Packs, index = _settings.Index;
-        if (Team.Address(_settings) is { } address)
-        {
-            Team.Me me = await Team.WhoAmIAsync(address);
-            if (me.Role is null)
-            {
-                throw new InvalidOperationException($"Tailscale says you are {me.Login}, not on the team at {address} yet: ask the owner to add you.");
-            }
+    private static async Task<Library> LoadAsync() => await Shelves.LoadAsync();
 
-            Team.Join(address, me);
-            (packs, index) = await Team.SyncIndexAsync();
-        }
+    private static string LibraryRoot => Shelves.LibraryRoot;
 
-        if (!Directory.Exists(index))
-        {
-            throw new InvalidOperationException($"No library index at {index}: set Packs and Index in Asset Shelf first (or a team server).");
-        }
+    private static string Id(Item i) => Shelves.Id(i);
 
-        return Library.Load(packs, index);
-    }
-
-    private static string LibraryRoot => Path.GetDirectoryName(_settings!.Index.TrimEnd('/', '\\')) ?? _settings.Index;
-
-    private static string Id(Item i) => $"{i.Pack.Id}/{i.Path}";
-
-    private static Item? FindItem(Library lib, string id)
-    {
-        int slash = id.IndexOf('/');
-        if (slash <= 0)
-        {
-            return null;
-        }
-
-        string pack = id[..slash], path = id[(slash + 1)..];
-        return lib.Items.FirstOrDefault(i => i.Pack.Id == pack && i.Path == path);
-    }
+    private static Item? FindItem(Library lib, string id) => Shelves.Find(lib, id);
 
     private static string? Option(string[] args, string name) => Array.IndexOf(args, name) is var i and >= 0 && i + 1 < args.Length ? args[i + 1] : null;
 
@@ -95,7 +65,12 @@ public static class Cli
 
     private static async Task<int> Search(string[] args)
     {
-        string[] flags = ["--kind", "--pack", "--licence", "--limit"];
+        if (Option(args, "--meaning") is not null || Option(args, "--like") is not null)
+        {
+            return await SearchByMeaning(args);
+        }
+
+        string[] flags = ["--kind", "--pack", "--licence", "--limit", "--meaning", "--like"];
         var free = args.Where((a, i) => !a.StartsWith("--", StringComparison.Ordinal) && (i == 0 || !flags.Contains(args[i - 1]))).ToList();
         string[] query = Words(string.Join(' ', free));
         HashSet<string>? kinds = Option(args, "--kind") is { } k ? new(k.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries), StringComparer.OrdinalIgnoreCase) : null;
@@ -130,6 +105,65 @@ public static class Cli
         }
 
         return 0;
+    }
+
+    /// <summary>Search by meaning, through the shelf-meaning add-on: it ranks, shelf filters and prints. Asset Shelf
+    /// carries no model or AI library; the add-on is installed on purpose, beside shelf or on the PATH.</summary>
+    private static async Task<int> SearchByMeaning(string[] args)
+    {
+        string addOn = MeaningAddOn() ?? throw new InvalidOperationException("Search by meaning is an add-on: install shelf-meaning (its own download), beside shelf or on the PATH.");
+        HashSet<string>? kinds = Option(args, "--kind") is { } k ? new(k.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries), StringComparer.OrdinalIgnoreCase) : null;
+        string[] pack = Words(Option(args, "--pack")), licence = Words(Option(args, "--licence"));
+        int limit = int.TryParse(Option(args, "--limit"), out int l) ? Math.Clamp(l, 1, 500) : 20;
+
+        var psi = new System.Diagnostics.ProcessStartInfo(addOn) { RedirectStandardOutput = true, UseShellExecute = false };
+        foreach (string a in Option(args, "--meaning") is { } text ? ["query", text] : (string[])["like", Option(args, "--like")!])
+        {
+            psi.ArgumentList.Add(a);
+        }
+
+        psi.ArgumentList.Add("--limit");
+        psi.ArgumentList.Add("2000");  // ranked wide, then filtered here
+        using var p = System.Diagnostics.Process.Start(psi)!;
+        string json = await p.StandardOutput.ReadToEndAsync();
+        await p.WaitForExitAsync();
+        if (p.ExitCode != 0)
+        {
+            throw new InvalidOperationException("shelf-meaning did not answer (its message is above).");
+        }
+
+        Library lib = await LoadAsync();
+        var byId = lib.Items.ToDictionary(Id, StringComparer.Ordinal);
+        var hits = (JsonSerializer.Deserialize<List<Ranked>>(json, new JsonSerializerOptions(JsonSerializerDefaults.Web)) ?? [])
+            .Select(r => (Item: byId.GetValueOrDefault(r.Id), r.Score)).Where(h => h.Item is not null).Select(h => (Item: h.Item!, h.Score))
+            .Where(h => kinds is null ? Library.DefaultKinds.Contains(h.Item.Kind) : kinds.Contains(h.Item.Kind))
+            .Where(h => pack.All(w => (h.Item.Pack.Title + " " + h.Item.Pack.Id).Contains(w, StringComparison.OrdinalIgnoreCase)))
+            .Where(h => licence.All(w => LicenceOf(h.Item.Pack).Contains(w, StringComparison.OrdinalIgnoreCase)))
+            .Take(limit).ToList();
+        if (args.Contains("--json"))
+        {
+            Console.WriteLine(JsonSerializer.Serialize(hits.Select(h => new { id = Id(h.Item), score = h.Score, name = h.Item.Name, kind = h.Item.Kind, pack = h.Item.Pack.Title, licence = LicenceOf(h.Item.Pack), picture = h.Item.Thumb }), Pretty));
+            return 0;
+        }
+
+        foreach (var (i, score) in hits)
+        {
+            Console.WriteLine($"{score:0.000}  {T(i.Name)}  [{i.Kind}]  {T(i.Pack.Title)}\n  {T(Id(i))}");
+        }
+
+        return 0;
+    }
+
+    private sealed record Ranked(string Id, double Score);
+
+    /// <summary>The add-on program: SHELF_MEANING, beside shelf, or on the PATH; null when not installed.</summary>
+    private static string? MeaningAddOn()
+    {
+        string exe = OperatingSystem.IsWindows() ? "shelf-meaning.exe" : "shelf-meaning";
+        IEnumerable<string> places = new[] { Environment.GetEnvironmentVariable("SHELF_MEANING"), Path.Combine(AppContext.BaseDirectory, exe) }
+            .Concat((Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries).Select(d => Path.Combine(d, exe)))
+            .OfType<string>();
+        return places.FirstOrDefault(File.Exists);
     }
 
     private static string LicenceOf(Pack p) =>
