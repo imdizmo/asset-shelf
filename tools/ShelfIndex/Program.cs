@@ -20,6 +20,11 @@ if (args.Length > 0 && args[0] == "export")
     return Exporter.Run(args[1..]);
 }
 
+if (args.Length > 0 && args[0] == "sounds")
+{
+    return Sounds.Run(args[1..]);
+}
+
 string? pack = null, outDir = null;
 for (int i = 0; i + 1 < args.Length; i += 2)
 {
