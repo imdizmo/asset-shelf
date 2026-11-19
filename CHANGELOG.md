@@ -9,6 +9,9 @@ Entries before 0.2.0 were written afterwards, from the git history.
 
 ### New
 
+- **KitBash3D kits from the command line.** `tools/kitbash_sync.py` lists the kits you bought on KitBash3D, downloads
+  the new or updated ones (Unreal by default, or FBX) with the session of your Firefox, and lays them out as packs
+  ready to index. Not in the app's menus yet.
 - **Suggestion button (team members only).** When Asset Shelf is connected to a team server, a Suggestion button sits
   at the top right. Write what would make Asset Shelf better, add screenshots (pick files, paste a picture, or add a
   picture of the Asset Shelf window), and send it to the team. Without a team there is no button. Needs ShelfServer

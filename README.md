@@ -155,6 +155,7 @@ finds and pulls assets the same way, and never copies from the library by hand.
 | `tools/export_fbx.py` | exports one Unreal asset to FBX and its textures, in a small throwaway project |
 | `tools/fab_sync.py` | Epic sign-in and the Fab library sync |
 | `tools/itch_sync.py` | itch.io sign-in and library sync |
+| `tools/kitbash_sync.py` | the KitBash3D kits you bought, downloaded with your browser session (command line only) |
 | `tools/verify_pack.py` | checks a downloaded Fab pack against its manifest |
 | `tools/picture_report.py` | which assets have a picture, and from where |
 
@@ -168,6 +169,9 @@ Run heavy ones under a memory cap, for example `systemd-run --user --scope -p Me
   documented by Epic and can change. The launcher client credentials in `fab_sync.py` are the public ones those
   projects use; your own token is kept in the system keyring.
 - **itch.io sync** uses itch.io's public API with your API key, also kept in the keyring.
+- **KitBash3D sync** (`tools/kitbash_sync.py`, command line only) has no public API to use: it asks the site what its
+  own Download button asks, with the session of your browser, kept in the keyring. It can stop working when the site
+  changes. Mind your licence tier before putting those kits in a shared library.
 
 ## Contributing
 
