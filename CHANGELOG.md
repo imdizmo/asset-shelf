@@ -9,6 +9,10 @@ Entries before 0.2.0 were written afterwards, from the git history.
 
 ### New
 
+- **itch.io sync: free packs, one creator at a time, more archive kinds.** `tools/itch_sync.py --free <file of page
+  links>` downloads free packs you never claimed, `--only <text>` limits a sync to the packs whose folder name holds
+  that text, and packs shipped as `.7z`, `.rar` or a split zip (`.z01`, `.z02`…) are now kept whole. Store pages are
+  fetched one every ten seconds, so itch.io does not refuse them.
 - **KitBash3D kits from the command line.** `tools/kitbash_sync.py` lists the kits you bought on KitBash3D, downloads
   the new or updated ones (Unreal by default, or FBX) with the session of your Firefox, and lays them out as packs
   ready to index. Not in the app's menus yet.

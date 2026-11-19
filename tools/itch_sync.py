@@ -4,6 +4,8 @@
     itch_sync.py login -                  an itch.io API key (itch.io/user/settings/api-keys) read from stdin, kept in the
                                           system keyring (secret-tool service asset-shelf, account itch)
     itch_sync.py sync --packs <dir> --index <dir> [--plan <out.json>] [--download] [--changed <out.txt>]
+                                          [--only <text in the pack's folder name, such as a creator>]
+                                          [--free <file of game page URLs>: free games you do not own, instead of your library]
 
 Per game, one model format is kept (FBX, else Blend, glTF, OBJ, else a zip of unknown content; engine copies skipped),
 in <packs>/itch_<creator>_<title>_<game id>/raw/<format>/; a game shipping only a .unitypackage gets its models and
@@ -68,7 +70,7 @@ def fmt(name):
     for k, f in (('fbx', 'fbx'), ('blend', 'blender'), ('gltf', 'gltf'), ('glb', 'gltf'), ('obj', 'obj')):
         if k in n:
             return f
-    return 'other' if n.endswith('.zip') else None
+    return 'other' if re.search(r'\.(zip|7z|rar|z\d\d)$', n) else None  # .z01, .z02…: the other parts of a split zip
 
 
 def wanted(uploads):
@@ -101,6 +103,26 @@ def library():
         creator = g['user'].get('display_name') or g['user']['username']
         games.append({'game': g, 'key': k['id'], 'acquired': k.get('created_at', ''), 'creator': creator, 'uploads': uploads,
                       'slug': f"itch_{short(creator)}_{short(g['title'])}_{g['id']}"})
+    return games
+
+
+def free(listing):
+    """Free games you do not own, from a text file of their page URLs (one a line): itch.io's API lists and serves a
+    free game's files to any signed-in account. One page request per game, paced."""
+    games = []
+    for url in [l.strip().rstrip('/') for l in open(listing) if l.strip() and not l.startswith('#')]:
+        time.sleep(10)
+        try:
+            gid = json.loads(get(url + '/data.json') or b'{}').get('id')
+            g = api(f'/games/{gid}')['game']
+            uploads = api(f'/games/{gid}/uploads').get('uploads', [])
+        except Exception as e:
+            log(f'  not found or not free: {url} ({type(e).__name__})')
+            continue
+        creator = g['user'].get('display_name') or g['user']['username']
+        games.append({'game': g, 'key': None, 'acquired': '', 'creator': creator, 'uploads': uploads,
+                      'slug': f"itch_{short(creator)}_{short(g['title'])}_{g['id']}"})
+        log(f"free: {g['title']} ({len(uploads)} files)")
     return games
 
 
@@ -152,7 +174,7 @@ def plan(games, packs):
 
 
 def download_url(g, u):
-    req = urllib.request.Request(f"https://api.itch.io/uploads/{u['id']}/download?download_key_id={g['key']}",
+    req = urllib.request.Request(f"https://api.itch.io/uploads/{u['id']}/download" + (f"?download_key_id={g['key']}" if g['key'] else ''),
                                  headers={'Authorization': 'Bearer ' + key()})
 
     class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -253,6 +275,7 @@ def store_page(g, index):
         return
     os.makedirs(os.path.join(d, 'gallery'), exist_ok=True)
     game = g['game']
+    time.sleep(10)  # itch.io answers 429 to a run of page requests: one game page every ten seconds at most
     page = (get(game['url']) or b'').decode('utf-8', 'replace')
     m = re.search(r'formatted_description.*?</div>\s*</div>', page, re.S)
     text = re.sub(r'\s+', ' ', re.sub(r'<[^>]+>', ' ', html.unescape(m.group(0) if m else ''))).strip()
@@ -316,7 +339,9 @@ def main():
     if not args or args[0] != 'sync' or not opt('--packs') or not opt('--index'):
         sys.exit(__doc__)
     packs, index = opt('--packs'), opt('--index')
-    games = library()
+    games = free(opt('--free')) if opt('--free') else library()
+    if opt('--only'):  # only the packs whose folder name holds this text (itch_<creator>_<title>_<id>)
+        games = [g for g in games if opt('--only').lower() in g['slug'].lower()]
     p = plan(games, packs)
     log(f"{len(p['new'])} new, {len(p['updated'])} updated, {len(p['same'])} up to date")
     for r in p['new'][:20]:
