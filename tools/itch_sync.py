@@ -98,6 +98,8 @@ def library():
         g = k['game']
         if g['id'] in seen:
             continue  # a game bought twice (bundles) is one pack
+        if g.get('classification') == 'tool':
+            continue  # a program (an editor, a generator) is not a pack of assets
         seen.add(g['id'])
         uploads = api(f"/games/{g['id']}/uploads?download_key_id={k['id']}").get('uploads', [])
         creator = g['user'].get('display_name') or g['user']['username']
