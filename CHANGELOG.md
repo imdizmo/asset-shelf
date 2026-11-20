@@ -9,6 +9,10 @@ Entries before 0.2.0 were written afterwards, from the git history.
 
 ### New
 
+- **2D art packs in the library.** A pack of interface kits, icons, sprites or backgrounds is indexed too: each folder
+  of pictures is one entry (under Textures), pictured by a contact sheet of up to 16 of them. Needs ImageMagick.
+  Packs shipped as `.7z`, `.rar` or split zips are unpacked with 7z, and long packs no longer run Blender out of
+  memory (a fresh Blender every 200 models).
 - **itch.io sync: free packs, one creator at a time, more archive kinds.** `tools/itch_sync.py --free <file of page
   links>` downloads free packs you never claimed, `--only <text>` limits a sync to the packs whose folder name holds
   that text, and packs shipped as `.7z`, `.rar` or a split zip (`.z01`, `.z02`…) are now kept whole. Store pages are
