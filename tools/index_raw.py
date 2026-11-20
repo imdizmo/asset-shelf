@@ -29,7 +29,11 @@ def unpack(raw):
                     with zipfile.ZipFile(src) as z:  # extractall drops absolute and '..' parts
                         z.extractall(dest + '.part')
                 elif shutil.which('7z'):
-                    subprocess.run(['7z', 'x', '-y', '-bd', '-o' + dest + '.part', src], check=True, stdout=subprocess.DEVNULL)
+                    if not plain_archive(src):
+                        print('not unpacked (it holds links or paths that lead outside):', f)
+                        continue
+                    shutil.rmtree(dest + '.part', ignore_errors=True)  # a fresh folder: nothing in it to write through
+                    subprocess.run(['7z', 'x', '-aos', '-bd', '-o' + dest + '.part', src], check=True, stdout=subprocess.DEVNULL, stdin=subprocess.DEVNULL)
                 else:
                     print('not unpacked (7z is not installed):', f)
                     continue
@@ -42,6 +46,24 @@ def unpack(raw):
                     if os.path.islink(os.path.join(dd, n)):
                         os.remove(os.path.join(dd, n))
             os.rename(dest + '.part', dest)
+
+
+def plain_archive(src):
+    """True when 7z lists only ordinary files and folders with relative paths: an archive with a symbolic or hard link,
+    an absolute path or a '..' part could write outside its folder, and is refused."""
+    r = subprocess.run(['7z', 'l', '-slt', '-ba', src], capture_output=True, text=True, errors='replace', stdin=subprocess.DEVNULL)
+    if r.returncode:
+        return False
+    for line in r.stdout.splitlines():
+        k, _, v = line.partition(' = ')
+        v = v.strip()
+        if k == 'Path' and (v.startswith(('/', '\\')) or re.match(r'[A-Za-z]:', v) or '..' in re.split(r'[\\/]', v)):
+            return False
+        if k in ('Symbolic Link', 'Hard Link') and v:
+            return False
+        if k == 'Attributes' and re.search(r'(^|\s)l[rwx-]{9}', v):
+            return False
+    return True
 
 
 def one_format(models):
@@ -79,6 +101,7 @@ def materials(raw, out, images):
     return found
 
 
+CODERS = {'.png': 'png', '.jpg': 'jpeg', '.jpeg': 'jpeg', '.tga': 'tga', '.tif': 'tiff', '.tiff': 'tiff', '.exr': 'exr', '.webp': 'webp'}
 MAPS = re.compile(r'normal|_nor|rough|metal|displace|height|_ao|occlusion|base_?colou?r|albedo|diffuse|_arm', re.I)
 
 
@@ -124,7 +147,11 @@ def sheet(magick, pics, thumb, size):
         cells = []
         for i, p in enumerate(pics):
             c = os.path.join(tmp, f'{i:02d}.png')
-            r = subprocess.run([magick, *limits, p + '[0]', '-thumbnail', f'{cell}x{cell}', '-background', 'none', '-gravity', 'center',
+            coder = CODERS.get(os.path.splitext(p)[1].lower())
+            if not coder:
+                continue
+            # the decoder is named from the file's extension: ImageMagick must not guess one from the file's content
+            r = subprocess.run([magick, *limits, f'{coder}:{p}[0]', '-thumbnail', f'{cell}x{cell}', '-background', 'none', '-gravity', 'center',
                                 '-extent', f'{cell}x{cell}', c], capture_output=True, timeout=120)
             if r.returncode == 0 and os.path.exists(c):
                 cells.append(c)
