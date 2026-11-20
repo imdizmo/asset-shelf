@@ -41,10 +41,10 @@ def unpack(raw):
                 print(f'not unpacked: {f} ({type(e).__name__})')
                 shutil.rmtree(dest + '.part', ignore_errors=True)
                 continue
-            for dd, ds, fs in os.walk(dest + '.part'):
-                for n in ds + fs:
-                    if os.path.islink(os.path.join(dd, n)):
-                        os.remove(os.path.join(dd, n))
+            if any(os.path.islink(os.path.join(dd, n)) for dd, ds, fs in os.walk(dest + '.part') for n in ds + fs):
+                print('not unpacked (it brought links along):', f)  # whatever the listing said: nothing of it is kept
+                shutil.rmtree(dest + '.part', ignore_errors=True)
+                continue
             os.rename(dest + '.part', dest)
 
 
@@ -52,17 +52,19 @@ def plain_archive(src):
     """True when 7z lists only ordinary files and folders with relative paths: an archive with a symbolic or hard link,
     an absolute path or a '..' part could write outside its folder, and is refused."""
     r = subprocess.run(['7z', 'l', '-slt', '-ba', src], capture_output=True, text=True, errors='replace', stdin=subprocess.DEVNULL)
-    if r.returncode:
-        return False
-    for line in r.stdout.splitlines():
+    text = r.stdout.replace('\r\n', '\n')
+    if r.returncode or re.search(r'[\x00-\x09\x0b-\x1f\x7f\x85\u2028\u2029]', text):
+        return False  # a control character in a name could fake a line of this listing
+    for line in text.split('\n'):
         k, _, v = line.partition(' = ')
         v = v.strip()
         if k == 'Path' and (v.startswith(('/', '\\')) or re.match(r'[A-Za-z]:', v) or '..' in re.split(r'[\\/]', v)):
             return False
         if k in ('Symbolic Link', 'Hard Link') and v:
             return False
-        if k == 'Attributes' and re.search(r'(^|\s)l[rwx-]{9}', v):
-            return False
+        mode = k == 'Attributes' and re.search(r'(?:^|\s)(\S)[rwxsStT-]{9}(?:\s|$)', v)
+        if mode and mode.group(1) not in '-d':
+            return False  # a Unix type other than file or folder: a link, a device, a pipe
     return True
 
 
