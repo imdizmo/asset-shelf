@@ -22,6 +22,9 @@ def load(path):
     elif ext == '.obj':
         bpy.ops.wm.obj_import(filepath=path)
     elif ext == '.blend':
+        # ponytail: a sculpt file's multires data filled 14 GB on load; such packs carry an export beside it. Read per object if this hides real models.
+        if os.path.getsize(path) > 200 << 20:
+            raise ValueError('.blend over 200 MB, not opened')
         with bpy.data.libraries.load(path, link=False) as (src, dst):
             dst.objects = src.objects
         for o in dst.objects:
@@ -104,6 +107,9 @@ for item in job['files']:
             link = bsdf and bsdf.inputs['Base Color'].links
             if link and link[0].from_node.type == 'TEX_IMAGE':
                 m.node_tree.nodes.active = link[0].from_node
+        # ponytail: subdivision capped at 1 so a sculpt file with multires cannot fill memory; the triangle count is of that capped mesh
+        sc = bpy.context.scene
+        sc.render.use_simplify, sc.render.simplify_subdivision, sc.render.simplify_subdivision_render = True, 1, 1
         dg = bpy.context.evaluated_depsgraph_get()
         r['triangles'] = sum(sum(len(p.vertices) - 2 for p in o.evaluated_get(dg).data.polygons) for o in meshes)
         r['meshes'] = len(meshes)
@@ -113,5 +119,5 @@ for item in job['files']:
     except Exception as e:  # one bad file must not stop the pack
         r['error'] = f'{type(e).__name__}: {e}'
     results.append(r)
-json.dump(results, open(job['out'], 'w'), indent=1)
+    json.dump(results, open(job['out'], 'w'), indent=1)  # after every file: if Blender dies, the caller sees which one
 print('SHELF RAW DONE', len(results))

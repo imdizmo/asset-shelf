@@ -190,11 +190,17 @@ def main():
     job = os.path.join(out, 'blender_job.json')
     res = os.path.join(out, 'blender_result.json')
     results = []
-    for i in range(0, len(jobs), 200):  # a fresh Blender every 200 models: its memory grows over a long pack
-        json.dump({'files': jobs[i:i + 200], 'images': images, 'size': o.size, 'out': res}, open(job, 'w'))
+    while len(results) < len(jobs):  # a fresh Blender every 50 models: its memory grows over a long pack
+        batch = jobs[len(results):len(results) + 50]
+        json.dump({'files': batch, 'images': images, 'size': o.size, 'out': res}, open(job, 'w'))
+        if os.path.exists(res):
+            os.remove(res)
         subprocess.run([o.blender, '-b', '--factory-startup', '--disable-autoexec', '-P',
-                        os.path.join(HERE, 'blender_raw.py'), '--', job], check=True, stdout=subprocess.DEVNULL)
-        results += json.load(open(res))
+                        os.path.join(HERE, 'blender_raw.py'), '--', job], stdout=subprocess.DEVNULL)
+        done = json.load(open(res)) if os.path.exists(res) else []
+        results += done
+        if len(done) < len(batch):  # Blender died (crash, out of memory) on the next file: that file is lost, not the pack
+            results.append({'file': batch[len(done)]['file'], 'error': 'Blender stopped on this file'})
     assets = []
     for j, r in zip(jobs, results):
         fmt = os.path.splitext(j['file'])[1][1:].lower()
