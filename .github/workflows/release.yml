@@ -39,7 +39,7 @@ jobs:
         with:
           name: notes
           path: release-notes.md
-          retention-days: 14
+          retention-days: 1  # only a hand-off to the release job; the release keeps the files
       - name: Package for Linux
         run: scripts/package.sh linux-x64 "${{ steps.version.outputs.version }}" dist
       - name: Package for Windows
@@ -55,7 +55,7 @@ jobs:
             dist/*.tar.gz
             dist/*.zip
             dist/*.AppImage
-          retention-days: 14
+          retention-days: 1  # only a hand-off to the release job; the release keeps the files
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
