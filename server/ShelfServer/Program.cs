@@ -506,11 +506,13 @@ public static partial class Server
         _ => false,
     };
 
-    /// <summary>The request's Origin when it is Questlog's page on this machine (http, one of this server's host names,
-    /// Questlog's port), else null. Never for reading lists: only whoami and sending a suggestion use it.</summary>
+    /// <summary>The request's Origin when it is Questlog's page on this machine (http, Questlog's port, and this
+    /// server's numeric address or one of its full names), else null. One-word names (nas, localhost) are not trusted:
+    /// on a teammate's own network such a name can be made to point at someone else's page. Never for reading lists: only whoami and sending a suggestion use it.</summary>
     // ponytail: Questlog's port is fixed at 8780 in the team server; make it a setting if Questlog ever moves
     static string? SameMachinePage(Req req) =>
         Uri.TryCreate(req.Headers["Origin"], UriKind.Absolute, out Uri? o) && o.Scheme == "http" && o.AbsolutePath == "/" && o.Port == 8780
+        && (o.HostNameType is UriHostNameType.IPv4 or UriHostNameType.IPv6 || o.IdnHost.Contains('.'))
         && Hosts.Any(h => string.Equals(h[..h.LastIndexOf(':')], o.IdnHost, StringComparison.OrdinalIgnoreCase)) ? $"http://{o.Authority}" : null;
 
     static async Task KnowHosts(IPEndPoint at, string extra)

@@ -16,7 +16,8 @@ Before 0.3.0 it was not released as a package. It ran only on the team's own ser
 - Crash reports and suggestions may also say `os=web`, for a tool used in a browser.
 - **Questlog's page can read the library's index and pictures**, and the maps' and props' lists and pictures, from
   the browser (for its Assets tab), and ask who the person is. Only for Questlog's page on the team machine (port
-  8780), only those reads: pack files, zips and everything else stay closed to other pages.
+  8780), only those reads: pack files, zips and everything else stay closed to other pages. The page must be opened by the
+  server's numeric address or its full name (`name.tailnet.ts.net`); a one-word name such as `nas` is not accepted.
 
 ## [0.6.1] - 2026-11-18
 
