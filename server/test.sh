@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # The server's check: runs it on loopback with a made-up library and team list, and tries each route with curl.
+# SHELF_BIN=<a ShelfServer program> checks that one instead (a released, trimmed build behaves differently).
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 s="${HOME}/.cache/asset-shelf/scratch/server-test"
@@ -9,7 +10,7 @@ echo data > "$s/lib/packs/P1/unreal/Content/A.uasset"; ln -s /etc/passwd "$s/lib
 echo '{"version":1,"members":[{"login":"me@x","name":"Me","role":"member"},{"login":"obs@x","name":"O","role":"observer"}]}' > "$s/team.json"
 dotnet build -c Release "$root/server/ShelfServer" -v q -nologo >/dev/null
 port=18781; u="http://127.0.0.1:$port"
-start() { SHELF_DEV_LOGIN="$1" "$root/server/ShelfServer/bin/Release/net10.0/ShelfServer" --listen 127.0.0.1:$port --library "$s/lib" --store "$s/store" --team "$s/team.json" --max-upload 100000 >>"$s/log" 2>&1 & spid=$!; for _ in $(seq 50); do curl -s "$u/team/whoami" >/dev/null && return; sleep 0.1; done; }
+start() { SHELF_DEV_LOGIN="$1" "${SHELF_BIN:-$root/server/ShelfServer/bin/Release/net10.0/ShelfServer}" --listen 127.0.0.1:$port --library "$s/lib" --store "$s/store" --team "$s/team.json" --max-upload 100000 >>"$s/log" 2>&1 & spid=$!; for _ in $(seq 50); do curl -s "$u/team/whoami" >/dev/null && return; sleep 0.1; done; }
 trap 'kill $spid 2>/dev/null' EXIT
 code() { curl -s -o "$s/out" -w '%{http_code}' "$@"; }
 want() { [[ "$1" == "$2" ]] || { echo "FAIL $3: got $1 want $2: $(cat "$s/out")"; exit 1; }; echo "ok $3"; }

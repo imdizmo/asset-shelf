@@ -271,7 +271,7 @@ public static class Suggestion
                 throw new InvalidDataException($"{e.FullName} is not a {(lower.EndsWith(".png") ? "PNG" : "JPEG")} picture.");
             }
 
-            shots.Add(e.FullName);
+            shots.Add((JsonNode)e.FullName);  // the cast, not Add<T>: the released build is trimmed and has no reflection for it
         }
 
         return text is null ? throw new InvalidDataException("A suggestion needs suggestion.txt with the person's words.") : new JsonObject { ["text"] = text, ["screenshots"] = shots };
