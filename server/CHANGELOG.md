@@ -4,7 +4,7 @@ The team's library service (see [README.md](README.md)). Its version is its own,
 From 0.5.0 it ships as part of the Jatify team server (imdizmo/jatify-team-server), not with Asset Shelf's releases.
 Before 0.3.0 it was not released as a package. It ran only on the team's own server while it was being built.
 
-## [0.7.0] - not released yet
+## [0.7.0] - 2026-11-23
 
 ### New
 
