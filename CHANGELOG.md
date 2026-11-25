@@ -5,7 +5,7 @@ own list: [server/CHANGELOG.md](server/CHANGELOG.md). Each release's notes on Gi
 
 Entries before 0.2.0 were written afterwards, from the git history.
 
-## [Unreleased]
+## [0.4.0] - 2026-11-25
 
 ### New
 
@@ -26,6 +26,12 @@ Entries before 0.2.0 were written afterwards, from the git history.
   at the top right. Write what would make Asset Shelf better, add screenshots (pick files, paste a picture, or add a
   picture of the Asset Shelf window), and send it to the team. Without a team there is no button. Needs ShelfServer
   0.7.0.
+
+### Fixed
+
+- **Measuring the sounds of a very large pack no longer reads the whole pack.** `index_library.py --sounds` opened
+  every file of a pack to find its sounds, which took hours over a network share for a pack with tens of thousands
+  of assets. It now opens only the sounds the index lists.
 
 ## [0.3.0] - 2026-11-18
 

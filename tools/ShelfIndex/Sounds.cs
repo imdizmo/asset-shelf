@@ -59,7 +59,15 @@ static class Sounds
 
         var sounds = new JsonObject();
         int read = 0, skipped = 0;
-        foreach (string key in provider.Files.Keys.Where(k => k.EndsWith(".uasset", StringComparison.OrdinalIgnoreCase)).Order(StringComparer.Ordinal))
+        // Only the packages the index lists as sounds, when there is an index: opening every package of a large pack
+        // to ask what it holds read tens of GB for a handful of sounds.
+        HashSet<string>? listed = File.Exists(Path.Combine(outDir!, "index.json"))
+            ? JsonNode.Parse(File.ReadAllText(Path.Combine(outDir!, "index.json")))?["assets"]?.AsArray()
+                .Where(a => (string?)a?["class"] == "SoundWave" && ((string?)a["path"])?.StartsWith("/Game/", StringComparison.Ordinal) == true)
+                .Select(a => "Content/" + ((string)a!["path"]!).Split('.')[0]["/Game/".Length..] + ".uasset")
+                .ToHashSet(StringComparer.OrdinalIgnoreCase)
+            : null;
+        foreach (string key in provider.Files.Keys.Where(k => k.EndsWith(".uasset", StringComparison.OrdinalIgnoreCase) && listed?.Contains(k) != false).Order(StringComparer.Ordinal))
         {
             byte[]? bytes = Wav(provider, key, out string? name);
             if (name is null)
